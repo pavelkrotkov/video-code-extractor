@@ -57,6 +57,29 @@ def test_shell_install_is_mid_high():
     assert _score("pip install requests") > 0.3
 
 
+def test_brace_style_class_header_scores_high():
+    assert _score("class Foo {\n    int x = 0;\n}") > 0.6
+
+
+def test_sql_is_recognized_as_code():
+    assert _score("SELECT name FROM users WHERE active = true") > 0.3
+
+
+def test_html_is_recognized_as_code():
+    assert _score('<div class="card">hello</div>') > 0.3
+
+
+def test_upper_case_constant_counts_as_identifier():
+    # MAX_RETRIES alone is a weak-but-nonzero code signal, clearly above empty.
+    assert _score("MAX_RETRIES") > 0.0
+
+
+def test_prose_with_sql_words_stays_low():
+    # "from" and "where" as English words must not trip the SQL signal.
+    prose = "Where do you come from, and where are you going from here today?"
+    assert _score(prose) < 0.2
+
+
 @pytest.mark.parametrize("text", [PYTHON, JS, PROSE, "", "x", "pip install x"])
 def test_scores_are_bounded(text):
     assert 0.0 <= _score(text) <= 1.0

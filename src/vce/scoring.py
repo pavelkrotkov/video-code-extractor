@@ -19,24 +19,35 @@ from vce.types import Candidate, Frame
 
 # (compiled pattern, weight). Order is irrelevant; each contributes at most once.
 _SIGNALS: list[tuple[re.Pattern[str], float]] = [
-    # function / class definitions — require a name and an opening ``(`` or ``:`` so prose
-    # like "the class later" does not match.
-    (re.compile(r"\b(?:def|function|fn)\s+\w+\s*\(|\bclass\s+\w+\s*[(:]"), 0.5),
+    # function / class definitions — require a name and an opening ``(``, ``:`` or ``{`` so prose
+    # like "the class later" does not match, while brace-style (Java/JS/C#) headers do.
+    (re.compile(r"\b(?:def|function|fn)\s+\w+\s*\(|\bclass\s+\w+\s*[({:]"), 0.5),
     # import statements (anchored to line start so "From the beginning" is not a hit).
     (re.compile(r"(?m)^\s*from\s+[\w.]+\s+import\b|^\s*import\s+[\w.]+|#include\b"), 0.4),
-    # block headers ending in a colon.
+    # SQL: require SELECT and FROM together so bare English "from"/"where" don't false-positive.
+    (re.compile(r"(?is)\bselect\b.+?\bfrom\b"), 0.4),
+    # block headers ending in ``:`` or ``{`` (brace languages), with an optional trailing comment.
     (
         re.compile(
-            r"(?m)^\s*(?:if|elif|else|for|while|def|class|try|except|finally|with|match|case|switch)\b.*:\s*$"
+            r"(?m)^\s*(?:if|elif|else|for|while|def|class|try|except|finally|with|match|case|switch)\b.*[:{]\s*(?:#.*|//.*)?$"
         ),
         0.35,
     ),
     # shell / package-manager lines.
     (re.compile(r"(?m)^\s*\$ |\bpip install\b|\bnpm install\b|\bapt-get\b|\bcargo\s+\w+"), 0.35),
+    # HTML / XML tags.
+    (re.compile(r"</?[a-zA-Z][\w:-]*(?:\s[^<>]*)?/?>"), 0.3),
     # multi-character operators that are rare in prose.
     (re.compile(r"==|!=|<=|>=|=>|->|&&|\|\||\+=|-=|::"), 0.3),
     # single ``=`` assignment at the start of a line.
     (re.compile(r"(?m)^\s*[\w.\[\]\"']+\s*=\s*[^=]"), 0.25),
+    # typed / keyword variable declarations: ``const x =``, ``int x =``, ``let y =``.
+    (
+        re.compile(
+            r"(?m)^\s*(?:const|let|var|final|static|public|private|int|float|double|long|char|bool|boolean|string|auto)\s+\w+\s*="
+        ),
+        0.25,
+    ),
     # function call: identifier immediately followed by parentheses.
     (re.compile(r"\b\w+\([^)]*\)"), 0.25),
     # statement-terminating semicolons.
@@ -45,8 +56,8 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
     (re.compile(r"(?m)^[ \t]+\S"), 0.2),
     # brackets and braces.
     (re.compile(r"[{}\[\]]"), 0.15),
-    # snake_case / camelCase / dotted.names identifiers.
-    (re.compile(r"\b[a-z]+_[a-z0-9_]+\b|\b[a-z]+[A-Z]\w*\b|\b\w+\.\w+\b"), 0.12),
+    # snake_case / UPPER_CASE / camelCase / dotted.names identifiers.
+    (re.compile(r"\b\w+_\w+\b|\b[a-z]+[A-Z]\w*\b|\b\w+\.\w+\b"), 0.12),
     # code comments.
     (re.compile(r"(?m)(?:^|\s)(?:#|//|/\*)"), 0.1),
     # bare keywords — intentionally tiny, since these also appear in English.
