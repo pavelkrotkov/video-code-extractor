@@ -28,6 +28,30 @@ flowchart LR
 
 Early scaffolding. Stages are tracked as GitHub issues under the project epic; the shared
 types (`vce.types`) and the `ExtractionBackend` protocol (`vce.backends.base`) are in place.
+The stages are now wired end-to-end behind the `vce extract` command.
+
+## Usage
+
+```bash
+vce extract LESSON.mp4 --out build/        # -> build/LESSON.py + build/LESSON.provenance.json
+```
+
+Frames are sampled (`--fps`, plus scene cuts) → de-duplicated → optionally cropped
+(`--crop X,Y,W,H`) → transcribed by the **cheap** backend → gated for code-likeness
+(`--score-threshold`) → merged into a clean script plus a provenance sidecar. The
+code-likeness gate scores a frame *from its transcription*, so it necessarily runs **after** the
+cheap backend reads each kept frame — it filters non-code frames out of the merge and the
+expensive vision tier, but does not avoid the cheap OCR pass itself.
+
+The `--backend` flag picks the primary (cheap) backend; with `paddleocr` selected, frames it reads
+with low confidence are escalated to the vision backend (`--escalate-below`, needs
+`OPENAI_API_KEY`; disable with `--no-escalate`). Intermediate frames and crops are written to
+per-video `<video>_frames` / `<video>_crops` sub-directories of `--out`.
+
+> The default `paddleocr` backend lives in the optional `paddle` extra, so a bare install must
+> first run `uv sync --extra paddle` (or `pip install 'video-code-extractor[paddle]'`).
+> Alternatively, run fully on the vision backend with `--backend vision-gpt4v` and `OPENAI_API_KEY`
+> set — no extra required.
 
 ## Develop
 
