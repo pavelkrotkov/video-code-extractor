@@ -15,7 +15,7 @@ confidently.
 
 Two-tier cost control
 ---------------------
-``primary`` is the cheap backend (PaddleOCR by default). ``escalation`` is the accurate vision
+``primary`` is the cheap backend (Apple Vision on macOS by default). ``escalation`` is the accurate vision
 backend, invoked only for kept frames whose primary confidence is below
 :attr:`PipelineConfig.escalate_below`. When no escalation backend is wired up (e.g. no API key),
 the pipeline runs single-tier on the primary backend alone.

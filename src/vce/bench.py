@@ -1,6 +1,6 @@
 """Backend benchmark: measure extraction backends against hand-labeled frames.
 
-The key design fork in this project is the extraction backend (PaddleOCR vs a Vision-LLM).
+The key design fork in this project is the extraction backend (Apple Vision vs a Vision-LLM).
 Rather than pick by vibes, this module *measures*: it runs each backend over a small set of
 hand-labeled frames and scores the recovered text against ground truth with two complementary
 metrics, then names a recommended default.
@@ -266,8 +266,8 @@ def main(
     """Run the benchmark and print the comparison table and winner.
 
     Importable and testable: pass ``backends`` and ``labeled_frames`` to run fully offline with
-    fake backends. With no ``backends``, it wires up the real PaddleOCR and Vision-LLM backends —
-    those require the ``paddle`` extra / an OpenAI API key respectively, so the offline path
+    fake backends. With no ``backends``, it wires up the real Apple Vision and Vision-LLM backends —
+    those require macOS (``ocrmac``) / an OpenAI API key respectively, so the offline path
     (explicit backends) is what the test suite exercises.
     """
     if labeled_frames is None:
@@ -282,11 +282,11 @@ def main(
     if not labeled_frames:
         print(f"Error: No labeled frames found in {fixtures_dir}", file=sys.stderr)
         return 1
-    if backends is None:  # pragma: no cover - real backends need network / heavy extra
-        from vce.backends.paddle import PaddleOCRBackend
+    if backends is None:  # pragma: no cover - real backends need macOS / network
+        from vce.backends.macos_vision import MacOSVisionBackend
         from vce.backends.vision import VisionLLMBackend
 
-        backends = [PaddleOCRBackend(), VisionLLMBackend()]
+        backends = [MacOSVisionBackend(), VisionLLMBackend()]
     report = run_benchmark(backends, labeled_frames)
     print(format_report(report))
     if report.winner is None:

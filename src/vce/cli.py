@@ -4,11 +4,12 @@ This module is intentionally thin — it parses arguments, builds the backends a
 :class:`~vce.pipeline.PipelineConfig`, hands off to :class:`~vce.pipeline.Pipeline`, and turns the
 stages' exceptions into clean one-line errors. All ordering and policy live in :mod:`vce.pipeline`.
 
-Two-tier cost control: ``--backend`` chooses the *primary* (cheap) backend; when it is PaddleOCR
+Two-tier cost control: ``--backend`` chooses the *primary* (cheap) backend; when it is Apple Vision
 the accurate vision backend is wired up as the escalation tier, used only for kept frames the
 primary read with low confidence. Escalation needs an OpenAI key — when none is available it is
 disabled (the run proceeds single-tier and says so), except when vision is itself the primary
-backend, where a missing key is a hard error.
+backend, where a missing key is a hard error. The local ``macos-vision`` backend is macOS-only; on
+other platforms it is a clean error pointing at the remote ``vision-gpt4v`` backend.
 """
 
 from __future__ import annotations
@@ -20,13 +21,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from vce.backends.base import ExtractionBackend
-from vce.backends.paddle import PaddleOCRBackend
+from vce.backends.macos_vision import MacOSVisionBackend, UnsupportedPlatformError
 from vce.backends.vision import VisionLLMBackend
 from vce.frames import FFmpegNotFoundError, FrameExtractionError
 from vce.pipeline import Pipeline, PipelineConfig
 from vce.types import BBox
 
-PADDLE = "paddleocr"
+MACOS_VISION = "macos-vision"
 VISION = "vision-gpt4v"
 
 
@@ -58,9 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--fps", type=float, default=1.0, help="frame sampling rate (default 1.0)")
     extract.add_argument(
         "--backend",
-        choices=[PADDLE, VISION],
-        default=PADDLE,
-        help="primary extraction backend (default paddleocr)",
+        choices=[MACOS_VISION, VISION],
+        default=MACOS_VISION,
+        help="primary extraction backend (default macos-vision)",
     )
     extract.add_argument("--out", type=Path, default=Path("."), help="output directory (default .)")
     extract.add_argument(
@@ -115,9 +116,17 @@ def _resolve_backends(
         # Already the accurate backend — there is nothing more expensive to escalate to.
         return VisionLLMBackend(api_key=api_key), None, None
 
-    primary: ExtractionBackend = PaddleOCRBackend()
+    # The local macos-vision backend depends on Apple's Vision framework; fail fast and clean on
+    # other platforms, pointing the user at the remote vision-gpt4v backend instead of a traceback.
+    if sys.platform != "darwin":
+        raise CLIError(
+            "the macos-vision backend requires macOS; on this platform run with "
+            "--backend vision-gpt4v (needs OPENAI_API_KEY)"
+        )
+
+    primary: ExtractionBackend = MacOSVisionBackend()
     if args.no_escalate:
-        return primary, None, "escalation disabled (--no-escalate); running on paddleocr only"
+        return primary, None, "escalation disabled (--no-escalate); running on macos-vision only"
     if not api_key:
         return (
             primary,
@@ -154,8 +163,11 @@ def _run_extract(args: argparse.Namespace) -> int:
     except OSError as exc:
         # e.g. PermissionError / disk full while creating the output dir or writing artifacts.
         raise CLIError(f"I/O error: {exc}") from exc
+    except UnsupportedPlatformError as exc:
+        # macos-vision invoked on a non-macOS host (e.g. via a direct backend call path).
+        raise CLIError(str(exc)) from exc
     except ImportError as exc:
-        # e.g. the paddle extra isn't installed; the backend raises with install instructions.
+        # e.g. ocrmac isn't installed on macOS; the backend raises with install instructions.
         raise CLIError(str(exc)) from exc
     except ValueError as exc:
         # e.g. an out-of-range threshold rejected by PipelineConfig.
