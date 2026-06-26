@@ -93,11 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.3,
         help="ffmpeg scene-change sensitivity (0..1, default 0.3)",
     )
-    extract.add_argument(
-        "--api-key",
-        default=None,
-        help="OpenAI API key for the vision backend (defaults to $OPENAI_API_KEY)",
-    )
+    # The OpenAI key is read only from $OPENAI_API_KEY — deliberately not a CLI flag, since secrets
+    # passed as arguments leak into process listings (ps / /proc) and shell history (CWE-214).
     return parser
 
 
@@ -110,14 +107,11 @@ def _resolve_backends(
     escalation disabled for want of a key), or ``None``. Raises :class:`CLIError` for the
     unrecoverable case: vision selected as the primary backend with no API key available.
     """
-    api_key = args.api_key or os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY")
 
     if args.backend == VISION:
         if not api_key:
-            raise CLIError(
-                "the vision-gpt4v backend needs an OpenAI API key; pass --api-key or set "
-                "OPENAI_API_KEY"
-            )
+            raise CLIError("the vision-gpt4v backend needs an OpenAI API key; set OPENAI_API_KEY")
         # Already the accurate backend — there is nothing more expensive to escalate to.
         return VisionLLMBackend(api_key=api_key), None, None
 
