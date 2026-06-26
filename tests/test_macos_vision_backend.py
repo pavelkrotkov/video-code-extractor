@@ -104,6 +104,32 @@ def test_to_extraction_groups_same_line_fragments_left_to_right():
     assert ext.text == "x = 1 # note\ny = 2"
 
 
+def test_to_extraction_short_leading_glyph_does_not_split_line():
+    # A short glyph (e.g. a quote) sorts first and anchors the line, but its tiny height must not
+    # split the full-height word beside it onto a separate line — the grouping uses the taller box.
+    annotations = [
+        ("'", 0.9, (0.10, 0.88, 0.02, 0.04)),  # short, topmost -> would-be tiny anchor
+        ("name", 0.9, (0.13, 0.84, 0.30, 0.07)),  # full height, same visual line
+    ]
+    ext = _to_extraction(annotations, FRAME, 100, 100)
+    assert ext.text == "' name"
+    assert "\n" not in ext.text
+
+
+def test_to_extraction_skips_malformed_annotations():
+    annotations = [
+        ("good", 0.95, (0.1, 0.8, 0.2, 0.05)),
+        ("missing fields",),  # wrong arity
+        ("short bbox", 0.9, (0.1, 0.8)),  # bounding box is not 4 values
+        ("bad conf", "not-a-number", (0.1, 0.6, 0.2, 0.05)),  # confidence not float-able
+        ("also good", 0.85, (0.1, 0.4, 0.2, 0.05)),
+    ]
+    ext = _to_extraction(annotations, FRAME, 100, 100)
+    assert ext.text == "good\nalso good"
+    assert len(ext.bboxes) == 2
+    assert ext.confidence == pytest.approx((0.95 + 0.85) / 2)
+
+
 def test_to_extraction_empty_returns_empty_extraction():
     ext = _to_extraction([], FRAME, 100, 100)
     assert ext.text == ""

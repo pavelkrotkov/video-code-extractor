@@ -61,10 +61,13 @@ def _group_lines(items: list[tuple[BBox, str, float]]) -> list[list[tuple[BBox, 
     trailing inline comment) routinely differ by a pixel of OCR estimation noise, and a strict
     ``(y, x)`` sort would then split them onto separate lines or even swap their order (emitting the
     comment before the code). Instead we walk boxes top-down and attach each to an open line whose
-    vertical band already contains the box's center, starting a new line only when none does. The
-    band is the anchor (topmost) box's own height, i.e. boxes are treated as co-linear when their
-    centers fall within a line height of each other. Lines come back top-to-bottom, each ordered
-    left-to-right — the box-derived reading order issue #22 asks for, just jitter-tolerant.
+    anchor (its first, topmost box) is vertically close, starting a new line only when none is.
+
+    "Close" is a center-to-center distance within half of the *taller* of the two boxes. Using the
+    larger height — rather than the anchor's — is what keeps a short leading glyph (a hyphen, quote,
+    or dot that sorts first and would otherwise be a tiny anchor) from splitting the rest of its
+    line off. Lines come back top-to-bottom, each ordered left-to-right — the box-derived reading
+    order issue #22 asks for, just jitter-tolerant.
     """
     lines: list[list[tuple[BBox, str, float]]] = []
     for item in sorted(items, key=lambda it: (it[0].y, it[0].x)):
@@ -72,10 +75,11 @@ def _group_lines(items: list[tuple[BBox, str, float]]) -> list[list[tuple[BBox, 
         center = bbox.y + bbox.height / 2
         for line in lines:
             anchor = line[0][0]
-            if anchor.y <= center <= anchor.y + anchor.height:
+            anchor_center = anchor.y + anchor.height / 2
+            if abs(center - anchor_center) <= max(anchor.height, bbox.height) * 0.5:
                 line.append(item)
                 break
-        else:  # no open line contained this box's center — it starts a new line
+        else:  # no open line was vertically close enough — start a new one
             lines.append([item])
     lines.sort(key=lambda line: min(it[0].y for it in line))
     for line in lines:
@@ -92,11 +96,19 @@ def _to_extraction(
     within a line left-to-right; see :func:`_group_lines`) so the result reads in deterministic
     source order regardless of the annotation order Vision happened to return. Empty input yields an
     empty extraction with ``confidence == 0.0``. Confidence is the mean of the Vision confidences.
+
+    A single malformed annotation (wrong arity, a non-4 bounding box, a non-numeric confidence) is
+    skipped rather than crashing the whole frame, mirroring how the old PaddleOCR backend tolerated
+    its engine's version-to-version result shifts.
     """
-    converted = [
-        (_vision_bbox_to_pixels(norm_bbox, width, height), str(text), float(conf))
-        for text, conf, norm_bbox in annotations
-    ]
+    converted: list[tuple[BBox, str, float]] = []
+    for entry in annotations:
+        try:
+            text, conf, norm_bbox = entry
+            item = (_vision_bbox_to_pixels(norm_bbox, width, height), str(text), float(conf))
+        except (ValueError, TypeError, IndexError):
+            continue  # skip a malformed annotation, keep the rest of the frame
+        converted.append(item)
     lines = _group_lines(converted)
     texts = [" ".join(it[1] for it in line) for line in lines]
     confs = [it[2] for it in converted]
