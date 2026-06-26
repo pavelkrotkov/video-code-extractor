@@ -68,10 +68,22 @@ class PipelineConfig:
     def __post_init__(self) -> None:
         if self.fps <= 0:
             raise ValueError("fps must be positive")
-        if not 0.0 <= self.score_threshold <= 1.0:
-            raise ValueError("score_threshold must be within [0, 1]")
-        if not 0.0 <= self.escalate_below <= 1.0:
-            raise ValueError("escalate_below must be within [0, 1]")
+        if not 0.0 < self.scene_threshold <= 1.0:
+            raise ValueError("scene_threshold must be within (0, 1]")
+        if self.dedup_max_distance < 0:
+            raise ValueError("dedup_max_distance must be non-negative")
+        # Every remaining knob is a [0, 1] probability/score; validate them uniformly so a bad
+        # value fails here (before any ffmpeg work) instead of deep inside a downstream stage.
+        for name in (
+            "score_threshold",
+            "escalate_below",
+            "similarity_threshold",
+            "low_confidence_threshold",
+            "conflict_margin",
+        ):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be within [0, 1], got {value}")
 
 
 @dataclass(frozen=True)

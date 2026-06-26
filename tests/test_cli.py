@@ -161,6 +161,15 @@ def test_missing_video_is_clean_error(monkeypatch, capsys):
     assert "video not found" in capsys.readouterr().err
 
 
+def test_bad_threshold_is_clean_error(monkeypatch, capsys):
+    # Config validation fails before any stage runs, so this needs no fake pipeline / ffmpeg.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert cli.main(["extract", "v.mp4", "--score-threshold", "5"]) == 1
+    err = capsys.readouterr().err
+    assert "vce: error:" in err
+    assert "score_threshold must be within" in err
+
+
 def test_missing_paddle_extra_is_clean_error(monkeypatch, capsys):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

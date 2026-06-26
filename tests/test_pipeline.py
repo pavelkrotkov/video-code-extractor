@@ -84,6 +84,14 @@ def test_run_writes_script_and_provenance(tmp_path, synthetic_frames):
     assert all(e["cleaned_code"] == CODE for e in provenance)
 
 
+def test_empty_video_stem_falls_back_to_extracted(tmp_path, synthetic_frames):
+    # A path whose stem is empty (e.g. ".") must not produce ".py"/".provenance.json".
+    pipeline = Pipeline(FakeBackend("fake", lambda f: (CODE, 0.95)), _config(tmp_path))
+    result = pipeline.run(Path("."))
+    assert result.script_path.name == "extracted.py"
+    assert result.provenance_path.name == "extracted.provenance.json"
+
+
 def test_gate_drops_non_code_frames(tmp_path, synthetic_frames):
     # The middle frame transcribes to prose and must be dropped before merge/provenance.
     def fn(frame):
@@ -169,6 +177,12 @@ def test_build_script_empty_is_empty():
         {"fps": 0},
         {"score_threshold": 1.5},
         {"escalate_below": -0.1},
+        {"scene_threshold": 0.0},
+        {"scene_threshold": 1.5},
+        {"dedup_max_distance": -1},
+        {"similarity_threshold": 1.1},
+        {"low_confidence_threshold": -0.5},
+        {"conflict_margin": 2.0},
     ],
 )
 def test_config_rejects_bad_values(tmp_path, kwargs):

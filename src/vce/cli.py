@@ -134,22 +134,23 @@ def _resolve_backends(
 
 
 def _run_extract(args: argparse.Namespace) -> int:
-    primary, escalation, note = _resolve_backends(args)
-    if note:
-        print(f"vce: {note}", file=sys.stderr)
-
-    config = PipelineConfig(
-        out_dir=args.out,
-        fps=args.fps,
-        scene_threshold=args.scene_threshold,
-        score_threshold=args.score_threshold,
-        escalate_below=args.escalate_below,
-        crop=args.crop,
-    )
-    pipeline = Pipeline(primary, config, escalation=escalation)
-
+    # The whole setup-and-run sequence is wrapped so an expected error from *any* step — backend
+    # construction, config validation, or a pipeline stage — surfaces as a clean ``vce: error``
+    # rather than a raw traceback.
     try:
-        result = pipeline.run(args.video)
+        primary, escalation, note = _resolve_backends(args)
+        if note:
+            print(f"vce: {note}", file=sys.stderr)
+
+        config = PipelineConfig(
+            out_dir=args.out,
+            fps=args.fps,
+            scene_threshold=args.scene_threshold,
+            score_threshold=args.score_threshold,
+            escalate_below=args.escalate_below,
+            crop=args.crop,
+        )
+        result = Pipeline(primary, config, escalation=escalation).run(args.video)
     except FFmpegNotFoundError as exc:
         raise CLIError(str(exc)) from exc
     except FrameExtractionError as exc:
@@ -158,6 +159,9 @@ def _run_extract(args: argparse.Namespace) -> int:
         raise CLIError(str(exc)) from exc
     except ImportError as exc:
         # e.g. the paddle extra isn't installed; the backend raises with install instructions.
+        raise CLIError(str(exc)) from exc
+    except ValueError as exc:
+        # e.g. an out-of-range threshold rejected by PipelineConfig.
         raise CLIError(str(exc)) from exc
 
     print(
