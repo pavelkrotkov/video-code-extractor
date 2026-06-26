@@ -249,9 +249,17 @@ def build_provenance(
         extractions: The same extractions passed to :func:`merge_snippets`.
         merged: The snippets returned by :func:`merge_snippets` over those extractions.
     """
+    # Precompute frame -> contributing snippets once (O(M)) so each extraction's lookup is O(1)
+    # rather than a full scan of ``merged``; the whole pass is O(N + M) instead of O(N * M),
+    # which matters when a long video yields many extractions and snippets.
+    frame_to_snippets: dict[Frame, list[MergedSnippet]] = {}
+    for snippet in merged:
+        for frame in snippet.sources:
+            frame_to_snippets.setdefault(frame, []).append(snippet)
+
     entries: list[dict[str, object]] = []
     for extraction in extractions:
-        snippet = _snippet_for(extraction, merged)
+        snippet = _snippet_for(extraction, frame_to_snippets)
         entries.append(
             {
                 "timestamp": extraction.frame.timestamp_ms,
@@ -265,16 +273,18 @@ def build_provenance(
     return entries
 
 
-def _snippet_for(extraction: Extraction, merged: Sequence[MergedSnippet]) -> MergedSnippet | None:
+def _snippet_for(
+    extraction: Extraction, frame_to_snippets: dict[Frame, list[MergedSnippet]]
+) -> MergedSnippet | None:
     """Find the merged snippet ``extraction`` contributed to, or ``None`` if it contributed to none.
 
-    Candidates are the snippets whose ``sources`` include the extraction's frame. With one
-    candidate the answer is unambiguous. When the same frame fed several snippets, the extraction
-    is attributed to the candidate whose cleaned ``code`` is most similar to the extraction's own
-    text — i.e. the cluster it actually belongs to — with ties broken by the snippets' deterministic
-    order in ``merged``.
+    ``frame_to_snippets`` maps each frame to the snippets whose ``sources`` include it (built once
+    by :func:`build_provenance`), so candidate lookup is O(1). With one candidate the answer is
+    unambiguous. When the same frame fed several snippets, the extraction is attributed to the
+    candidate whose cleaned ``code`` is most similar to the extraction's own text — i.e. the cluster
+    it actually belongs to — with ties broken by the snippets' deterministic order in ``merged``.
     """
-    candidates = [m for m in merged if extraction.frame in m.sources]
+    candidates = frame_to_snippets.get(extraction.frame, [])
     if not candidates:
         return None
     if len(candidates) == 1:
