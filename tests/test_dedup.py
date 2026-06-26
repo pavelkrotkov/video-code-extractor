@@ -86,3 +86,9 @@ def test_tight_max_distance_keeps_near_duplicate(frames):
     # A and B sit ~2 bits apart; a sub-2 threshold no longer treats B as a duplicate of A.
     kept = dedup_frames([a, b, c], max_distance=1)
     assert kept == [a, b, c]
+
+
+def test_phash_raises_clear_error_for_missing_file(tmp_path):
+    missing = Frame(path=tmp_path / "does-not-exist.png", timestamp_ms=0)
+    with pytest.raises(ValueError, match="cannot open frame image"):
+        _phash(missing)

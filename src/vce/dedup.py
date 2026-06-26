@@ -17,7 +17,7 @@ the run-collapsing logic can be unit-tested without touching the disk or the has
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 from vce.types import Frame
@@ -34,16 +34,23 @@ def _phash(frame: Frame) -> ImageHash:
 
     Opens the frame with Pillow and returns an ``imagehash.ImageHash``; two such hashes can be
     subtracted (``a - b``) to get the Hamming distance between them.
+
+    Raises a clear :class:`ValueError` if the image cannot be read (missing path, permission
+    error, or unrecognized format) so a bad frame surfaces a useful message instead of a raw
+    ``OSError`` deep inside the dedup loop.
     """
     import imagehash
-    from PIL import Image
+    from PIL import Image, UnidentifiedImageError
 
-    with Image.open(frame.path) as img:
-        return imagehash.phash(img)
+    try:
+        with Image.open(frame.path) as img:
+            return imagehash.phash(img)
+    except (OSError, UnidentifiedImageError) as exc:
+        raise ValueError(f"cannot open frame image at {frame.path}: {exc}") from exc
 
 
 def dedup_frames(
-    frames: Sequence[Frame],
+    frames: Iterable[Frame],
     *,
     max_distance: int = 4,
     hash_func: Callable[[Frame], Hash] = _phash,
