@@ -101,6 +101,15 @@ class LossyBackend:
         return Extraction(frame=frame, text="", confidence=0.0, backend=self.name)
 
 
+class FailingBackend:
+    """Raises on extract, mimicking a missing API key / extra / network error."""
+
+    name = "failing"
+
+    def extract(self, image_path: Path, frame: Frame) -> Extraction:
+        raise RuntimeError("backend unavailable")
+
+
 @pytest.fixture
 def labeled():
     return load_labeled_frames(FIXTURES)
@@ -147,6 +156,16 @@ def test_run_benchmark_empty_backends_has_no_winner(labeled):
     assert report.backends == ()
 
 
+def test_run_benchmark_skips_failing_backend(labeled, capsys):
+    perfect = PerfectBackend({lf.frame.path: lf.truth for lf in labeled})
+    report = run_benchmark([FailingBackend(), perfect], labeled)
+    # the failing backend is dropped from the report; the working one still wins
+    names = {b.name for b in report.backends}
+    assert names == {"perfect"}
+    assert report.winner == "perfect"
+    assert "skipping backend 'failing'" in capsys.readouterr().err
+
+
 def test_run_benchmark_empty_labeled_frames_has_no_winner():
     # No frames to evaluate: every backend scores 0.0, so there is no real winner.
     lossy = LossyBackend()
@@ -188,3 +207,10 @@ def test_main_with_empty_labeled_frames_returns_error(capsys):
     assert rc == 1
     err = capsys.readouterr().err
     assert "Error: No labeled frames found" in err
+
+
+def test_main_with_missing_fixtures_dir_returns_error(capsys, tmp_path):
+    rc = main(backends=[], fixtures_dir=tmp_path / "nope")
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "fixtures directory does not exist" in err

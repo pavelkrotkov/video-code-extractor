@@ -100,11 +100,13 @@ def _tokenize(text: str) -> list[str]:
 def _token_accuracy(pred: str, truth: str) -> float:
     """Fraction of ground-truth tokens recovered, as a multiset intersection (see module docstring)."""
     truth_tokens = _tokenize(truth)
+    pred_tokens = _tokenize(pred)
     if not truth_tokens:
         # Nothing to recover: perfect only if the prediction is also empty of tokens.
-        return 1.0 if not _tokenize(pred) else 0.0
-    pred_counts = Counter(_tokenize(pred))
-    matched = sum(min(count, pred_counts[token]) for token, count in Counter(truth_tokens).items())
+        return 1.0 if not pred_tokens else 0.0
+    pred_counts = Counter(pred_tokens)
+    truth_counts = Counter(truth_tokens)
+    matched = sum(min(count, pred_counts[token]) for token, count in truth_counts.items())
     return matched / len(truth_tokens)
 
 
@@ -189,11 +191,21 @@ def run_benchmark(
     for backend in backends:
         levs: list[float] = []
         accs: list[float] = []
+        failed = False
         for lf in labeled_frames:
-            extraction = backend.extract(lf.frame.path, lf.frame)
+            try:
+                extraction = backend.extract(lf.frame.path, lf.frame)
+            except Exception as exc:  # one bad backend shouldn't sink the whole run
+                # A real backend can fail mid-run (missing API key/extra, network); skip it
+                # entirely rather than recording a partial, misleading score.
+                print(f"warning: skipping backend {backend.name!r}: {exc}", file=sys.stderr)
+                failed = True
+                break
             scores = score_extraction(extraction.text, lf.truth)
             levs.append(scores["levenshtein"])
             accs.append(scores["token_acc"])
+        if failed:
+            continue
         reports.append(
             BackendReport(
                 name=backend.name,
@@ -258,7 +270,14 @@ def main(
     (explicit backends) is what the test suite exercises.
     """
     if labeled_frames is None:
-        labeled_frames = load_labeled_frames(fixtures_dir)
+        fixtures_path = Path(fixtures_dir)
+        if not fixtures_path.is_dir():
+            print(
+                f"Error: fixtures directory does not exist or is not a directory: {fixtures_path}",
+                file=sys.stderr,
+            )
+            return 1
+        labeled_frames = load_labeled_frames(fixtures_path)
     if not labeled_frames:
         print(f"Error: No labeled frames found in {fixtures_dir}", file=sys.stderr)
         return 1
