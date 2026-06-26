@@ -59,6 +59,8 @@ def test_prompt_forbids_inference():
         ("```\nx = 1\ny = 2\n```", "x = 1\ny = 2"),
         ("import os", "import os"),
         ("Here is the code:\n```js\nconst a = 1;\n```", "const a = 1;"),
+        # truncated: opening fence but no closing fence (e.g. hit token limit)
+        ("```python\nimport jax\nx = 1", "import jax\nx = 1"),
     ],
 )
 def test_strip_fence(content, expected):

@@ -24,7 +24,12 @@ OCR_SYSTEM_PROMPT = (
     "no commentary."
 )
 
-_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+# Closing fence is optional (``\Z``) so a truncated response missing its closing ``` still
+# yields the code instead of leaking the opening fence into the output.
+_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)(?:```|\Z)", re.DOTALL)
+
+# OpenAI rejects images larger than 20 MB; fail fast with a clear message before the API call.
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 class _ChatClient(Protocol):
@@ -82,6 +87,11 @@ class VisionLLMBackend:
         return self._client
 
     def _build_messages(self, image_path: Path) -> list[dict[str, Any]]:
+        size = image_path.stat().st_size
+        if size > _MAX_IMAGE_BYTES:
+            raise ValueError(
+                f"image {image_path} is {size / 1e6:.1f} MB, exceeds OpenAI's 20 MB limit"
+            )
         mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
         b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
         data_uri = f"data:{mime_type};base64,{b64}"
