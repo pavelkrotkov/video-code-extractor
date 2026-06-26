@@ -58,9 +58,12 @@ def crop_region(frame: Frame, region: BBox, out_dir: Path) -> Path:
         if right > img_w or bottom > img_h:
             raise ValueError(f"region {region} is outside image bounds {img_w}x{img_h}")
         cropped = img.crop((region.x, region.y, right, bottom))
-        out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        source_digest = hashlib.sha1(str(frame.path).encode()).hexdigest()[:8]
+        # resolve()+as_posix() makes the digest absolute and platform-independent so the same
+        # source frame yields the same name regardless of cwd or OS path separators. sha256 keeps
+        # static analyzers happy (not security-sensitive — just a filename discriminator).
+        source_key = frame.path.resolve().as_posix()
+        source_digest = hashlib.sha256(source_key.encode()).hexdigest()[:8]
         out_path = out_dir / (
             f"{frame.path.stem}_{frame.timestamp_ms}_{source_digest}"
             f"_{region.x}_{region.y}_{region.width}_{region.height}.png"
