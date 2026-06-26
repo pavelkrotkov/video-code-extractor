@@ -147,6 +147,16 @@ def test_run_benchmark_empty_backends_has_no_winner(labeled):
     assert report.backends == ()
 
 
+def test_run_benchmark_empty_labeled_frames_has_no_winner():
+    # No frames to evaluate: every backend scores 0.0, so there is no real winner.
+    lossy = LossyBackend()
+    report = run_benchmark([lossy], [])
+    assert report.winner is None
+    assert len(report.backends) == 1
+    assert report.backends[0].mean_levenshtein == 0.0
+    assert report.backends[0].mean_token_acc == 0.0
+
+
 # --- reporting (kept separate from computation) --------------------------
 
 
@@ -171,3 +181,10 @@ def test_main_runs_offline_with_fake_backends(capsys, labeled):
     out = capsys.readouterr().out
     assert "perfect" in out
     assert "winner" in out.lower()
+
+
+def test_main_with_empty_labeled_frames_returns_error(capsys):
+    rc = main(backends=[], labeled_frames=[])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "Error: No labeled frames found" in err

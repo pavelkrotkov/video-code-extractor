@@ -39,6 +39,7 @@ fake backends in tests; real OCR/vision runs are gated on the caller wiring up a
 from __future__ import annotations
 
 import re
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -167,7 +168,7 @@ def load_labeled_frames(directory: Path | str) -> list[LabeledFrame]:
         truth_path = png.with_suffix(".txt")
         if not truth_path.exists():
             continue
-        truth = truth_path.read_text(encoding="utf-8").strip("\n")
+        truth = truth_path.read_text(encoding="utf-8").rstrip()
         frames.append(LabeledFrame(frame=Frame(path=png, timestamp_ms=0), truth=truth))
     return frames
 
@@ -180,7 +181,8 @@ def run_benchmark(
 
     For each backend, calls ``.extract()`` on each labeled frame, scores the recovered text against
     the ground truth, and averages each metric across frames. The recommended winner is the backend
-    with the highest :attr:`BackendReport.aggregate` score (``None`` if there are no backends).
+    with the highest :attr:`BackendReport.aggregate` score (``None`` if there are no backends, or no
+    labeled frames to evaluate — every backend scoring ``0.0`` over zero frames is not a real win).
     Backends are run in the given order, which is also their order in the report.
     """
     reports: list[BackendReport] = []
@@ -200,7 +202,7 @@ def run_benchmark(
                 n_frames=len(labeled_frames),
             )
         )
-    winner = max(reports, key=lambda r: r.aggregate).name if reports else None
+    winner = max(reports, key=lambda r: r.aggregate).name if reports and labeled_frames else None
     return BenchmarkReport(backends=tuple(reports), winner=winner)
 
 
@@ -257,6 +259,9 @@ def main(
     """
     if labeled_frames is None:
         labeled_frames = load_labeled_frames(fixtures_dir)
+    if not labeled_frames:
+        print(f"Error: No labeled frames found in {fixtures_dir}", file=sys.stderr)
+        return 1
     if backends is None:  # pragma: no cover - real backends need network / heavy extra
         from vce.backends.paddle import PaddleOCRBackend
         from vce.backends.vision import VisionLLMBackend
