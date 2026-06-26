@@ -5,6 +5,7 @@ import pytest
 
 from vce.frames import (
     FFmpegNotFoundError,
+    FrameExtractionError,
     _timestamp_for,
     extract_frames,
     scene_change_frames,
@@ -55,6 +56,16 @@ def test_extract_frames_cleans_stale_output(sample_clip, tmp_path):
     assert stale not in {f.path for f in frames}
     assert not stale.exists()
     assert frames[0].timestamp_ms == 0
+
+
+@requires_ffmpeg
+def test_extract_frames_raises_on_invalid_video(tmp_path):
+    bad = tmp_path / "bad.mp4"
+    bad.write_bytes(b"this is not a video")
+    with pytest.raises(FrameExtractionError) as excinfo:
+        extract_frames(bad, tmp_path / "out", fps=1.0)
+    # ffmpeg's own stderr is surfaced in the message, not swallowed
+    assert str(excinfo.value)
 
 
 @requires_ffmpeg

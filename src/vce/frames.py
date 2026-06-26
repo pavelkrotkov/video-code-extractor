@@ -15,11 +15,16 @@ from pathlib import Path
 
 from vce.types import Frame
 
-_PTS_TIME_RE = re.compile(r"pts_time:([0-9.]+)")
+# ``-?`` so negative pts (B-frame offsets / edit lists) keep their sign.
+_PTS_TIME_RE = re.compile(r"\bpts_time:(-?[0-9.]+)")
 
 
 class FFmpegNotFoundError(RuntimeError):
     """Raised when the ffmpeg binary is not available on PATH."""
+
+
+class FrameExtractionError(RuntimeError):
+    """Raised when ffmpeg exits non-zero; carries ffmpeg's stderr for diagnosis."""
 
 
 def _require_ffmpeg() -> str:
@@ -27,6 +32,28 @@ def _require_ffmpeg() -> str:
     if exe is None:
         raise FFmpegNotFoundError("ffmpeg not found on PATH; install it to extract frames")
     return exe
+
+
+def _run_ffmpeg(cmd: list[str]) -> str:
+    """Run an ffmpeg ``cmd`` and return its decoded stderr.
+
+    ``check=True`` raises ``CalledProcessError`` on failure, but its default message hides the
+    captured stderr, so we re-raise as :class:`FrameExtractionError` with ffmpeg's actual output
+    surfaced for debugging. ``encoding="utf-8"`` keeps decoding stable across platforms regardless
+    of the system locale.
+    """
+    try:
+        proc = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.CalledProcessError as exc:
+        raise FrameExtractionError(f"ffmpeg failed: {exc.stderr}") from exc
+    return proc.stderr
 
 
 def _timestamp_for(index: int, fps: float) -> int:
@@ -57,7 +84,7 @@ def extract_frames(video: Path, out_dir: Path, *, fps: float = 1.0) -> list[Fram
     ffmpeg = _require_ffmpeg()
     out_dir = _prepare_out_dir(video, out_dir, "frame_*.jpg")
     pattern = out_dir / "frame_%06d.jpg"
-    subprocess.run(
+    _run_ffmpeg(
         [
             ffmpeg,
             "-hide_banner",
@@ -69,9 +96,7 @@ def extract_frames(video: Path, out_dir: Path, *, fps: float = 1.0) -> list[Fram
             "-vf",
             f"fps={fps}",
             str(pattern),
-        ],
-        check=True,
-        capture_output=True,
+        ]
     )
     return [
         Frame(path=path, timestamp_ms=_timestamp_for(index, fps))
@@ -86,7 +111,7 @@ def scene_change_frames(video: Path, out_dir: Path, *, threshold: float = 0.3) -
     ffmpeg = _require_ffmpeg()
     out_dir = _prepare_out_dir(video, out_dir, "scene_*.jpg")
     pattern = out_dir / "scene_%06d.jpg"
-    proc = subprocess.run(
+    stderr = _run_ffmpeg(
         [
             ffmpeg,
             "-hide_banner",
@@ -98,13 +123,20 @@ def scene_change_frames(video: Path, out_dir: Path, *, threshold: float = 0.3) -
             "-vsync",
             "vfr",
             str(pattern),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+        ]
     )
-    times_ms = [round(float(t) * 1000) for t in _PTS_TIME_RE.findall(proc.stderr)]
+    # Only read pts_time from showinfo's own lines: a stray "pts_time:" in a file path or in
+    # stream metadata must not be mistaken for a frame timestamp.
+    times_ms: list[int] = []
+    for line in stderr.splitlines():
+        if "showinfo" not in line:
+            continue
+        match = _PTS_TIME_RE.search(line)
+        if match:
+            times_ms.append(round(float(match.group(1)) * 1000))
     paths = sorted(out_dir.glob("scene_*.jpg"))
-    # Counts must agree: showinfo emits one pts_time per selected frame, each saved as one file.
-    # strict=True fails loud if that invariant ever breaks rather than silently mispairing.
+    if len(paths) != len(times_ms):
+        raise FrameExtractionError(
+            f"scene frame/timestamp mismatch: {len(paths)} files but {len(times_ms)} timestamps"
+        )
     return [Frame(path=path, timestamp_ms=ts) for path, ts in zip(paths, times_ms, strict=True)]
