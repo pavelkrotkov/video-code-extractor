@@ -37,6 +37,32 @@ def test_poly_to_bbox():
     assert _poly_to_bbox([[10, 10], [50, 10], [50, 30], [10, 30]]) == BBox(10, 10, 40, 20)
 
 
+def test_poly_to_bbox_floor_ceil_encloses_fractional_polygon():
+    # floor the min, ceil the max so the box encloses (never clips) the text
+    box = _poly_to_bbox([[10.6, 10.4], [50.4, 10.4], [50.4, 30.6], [10.6, 30.6]])
+    assert box == BBox(10, 10, 41, 21)
+
+
+def test_poly_to_bbox_empty_returns_zero_box():
+    assert _poly_to_bbox([]) == BBox(0, 0, 0, 0)
+
+
+def test_to_extraction_skips_malformed_entries():
+    result = [
+        [
+            [[[0, 0], [10, 0], [10, 10], [0, 10]], ("good", 0.9)],
+            ["totally malformed entry"],  # wrong shape — must be skipped, not crash
+        ]
+    ]
+    ext = _to_extraction(result, FRAME)
+    assert ext.text == "good"
+    assert len(ext.bboxes) == 1
+
+
+def test_to_extraction_empty_list_does_not_crash():
+    assert _to_extraction([], FRAME).text == ""
+
+
 def test_to_extraction_maps_lines_conf_and_boxes():
     ext = _to_extraction(PADDLE_RESULT, FRAME)
     assert ext.text == "import jax\ndef f():"

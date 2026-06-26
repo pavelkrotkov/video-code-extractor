@@ -8,6 +8,7 @@ installing the extra.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from statistics import fmean
 from typing import Any, Protocol
@@ -20,24 +21,42 @@ class _Engine(Protocol):
 
 
 def _poly_to_bbox(points: list[list[float]]) -> BBox:
-    """Convert PaddleOCR's 4-point polygon to an axis-aligned :class:`BBox`."""
+    """Convert PaddleOCR's 4-point polygon to an axis-aligned :class:`BBox`.
+
+    Uses floor for the top-left and ceil for the bottom-right so the box fully encloses the
+    detected text rather than clipping fractional edges. Returns an empty box for empty input.
+    """
+    if not points:
+        return BBox(x=0, y=0, width=0, height=0)
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
-    left, top = round(min(xs)), round(min(ys))
-    return BBox(x=left, y=top, width=round(max(xs)) - left, height=round(max(ys)) - top)
+    left, top = math.floor(min(xs)), math.floor(min(ys))
+    right, bottom = math.ceil(max(xs)), math.ceil(max(ys))
+    return BBox(x=left, y=top, width=right - left, height=bottom - top)
 
 
 def _to_extraction(raw: Any, frame: Frame) -> Extraction:
-    """Map PaddleOCR's nested result for a single image to an :class:`Extraction`."""
+    """Map PaddleOCR's nested result for a single image to an :class:`Extraction`.
+
+    Empty results map to an empty extraction. ``raw[0]`` is guarded by the falsy check on
+    ``raw`` (an empty list short-circuits, so the index is never evaluated). Individual entries
+    with an unexpected shape are skipped rather than crashing the whole frame, since PaddleOCR's
+    result structure varies across versions.
+    """
     page = raw[0] if raw else None
     texts: list[str] = []
     confs: list[float] = []
     bboxes: list[BBox] = []
     for entry in page or []:
-        polygon, (text, conf) = entry[0], entry[1]
+        try:
+            polygon, (text, conf) = entry[0], entry[1]
+            bbox, conf_value = _poly_to_bbox(polygon), float(conf)
+        except (ValueError, IndexError, TypeError):
+            continue  # skip a malformed entry, keep the rest of the frame
+        # append together so a partial failure never misaligns the parallel lists
         texts.append(text)
-        confs.append(float(conf))
-        bboxes.append(_poly_to_bbox(polygon))
+        confs.append(conf_value)
+        bboxes.append(bbox)
     return Extraction(
         frame=frame,
         text="\n".join(texts),
