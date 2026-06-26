@@ -80,15 +80,28 @@ def test_to_extraction_maps_lines_conf_and_boxes_in_reading_order():
 
 
 def test_to_extraction_reconstructs_order_from_shuffled_boxes():
-    # Three lines handed over in scrambled order must come back top-to-bottom, then left-to-right.
+    # Lines on distinct rows handed over scrambled must come back top-to-bottom.
     shuffled = [
-        ("middle", 0.9, (0.1, 0.5, 0.2, 0.05)),
-        ("bottom-left", 0.9, (0.1, 0.2, 0.2, 0.05)),
-        ("bottom-right", 0.9, (0.6, 0.2, 0.2, 0.05)),
-        ("top", 0.9, (0.1, 0.8, 0.2, 0.05)),
+        ("third", 0.9, (0.1, 0.4, 0.2, 0.05)),
+        ("first", 0.9, (0.1, 0.8, 0.2, 0.05)),
+        ("fourth", 0.9, (0.1, 0.2, 0.2, 0.05)),
+        ("second", 0.9, (0.1, 0.6, 0.2, 0.05)),
     ]
     ext = _to_extraction(shuffled, FRAME, 100, 100)
-    assert ext.text == "top\nmiddle\nbottom-left\nbottom-right"
+    assert ext.text == "first\nsecond\nthird\nfourth"
+
+
+def test_to_extraction_groups_same_line_fragments_left_to_right():
+    # Two boxes on one visual line (code + trailing comment) join into a single line, ordered
+    # left-to-right — even though the comment box sits a pixel *higher* (smaller y) than the code.
+    # A strict (y, x) sort would emit "# note" first and split them; line-grouping must not.
+    annotations = [
+        ("# note", 0.9, (0.5, 0.81, 0.2, 0.05)),  # to the right, ~1px higher
+        ("x = 1", 0.9, (0.1, 0.80, 0.2, 0.05)),  # to the left
+        ("y = 2", 0.9, (0.1, 0.60, 0.2, 0.05)),  # next line down
+    ]
+    ext = _to_extraction(annotations, FRAME, 100, 100)
+    assert ext.text == "x = 1 # note\ny = 2"
 
 
 def test_to_extraction_empty_returns_empty_extraction():

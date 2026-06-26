@@ -54,25 +54,53 @@ def _vision_bbox_to_pixels(norm_bbox: Sequence[float], width: int, height: int) 
     return BBox(x=ileft, y=itop, width=max(0, iright - ileft), height=max(0, ibottom - itop))
 
 
+def _group_lines(items: list[tuple[BBox, str, float]]) -> list[list[tuple[BBox, str, float]]]:
+    """Group boxes into visual lines, tolerant of small vertical jitter, in reading order.
+
+    Sorting purely by top edge is fragile: two fragments on one visual line (e.g. a statement and a
+    trailing inline comment) routinely differ by a pixel of OCR estimation noise, and a strict
+    ``(y, x)`` sort would then split them onto separate lines or even swap their order (emitting the
+    comment before the code). Instead we walk boxes top-down and attach each to an open line whose
+    vertical band already contains the box's center, starting a new line only when none does. The
+    band is the anchor (topmost) box's own height, i.e. boxes are treated as co-linear when their
+    centers fall within a line height of each other. Lines come back top-to-bottom, each ordered
+    left-to-right — the box-derived reading order issue #22 asks for, just jitter-tolerant.
+    """
+    lines: list[list[tuple[BBox, str, float]]] = []
+    for item in sorted(items, key=lambda it: (it[0].y, it[0].x)):
+        bbox = item[0]
+        center = bbox.y + bbox.height / 2
+        for line in lines:
+            anchor = line[0][0]
+            if anchor.y <= center <= anchor.y + anchor.height:
+                line.append(item)
+                break
+        else:  # no open line contained this box's center — it starts a new line
+            lines.append([item])
+    lines.sort(key=lambda line: min(it[0].y for it in line))
+    for line in lines:
+        line.sort(key=lambda it: it[0].x)
+    return lines
+
+
 def _to_extraction(
     annotations: Sequence[Annotation], frame: Frame, width: int, height: int
 ) -> Extraction:
     """Map Vision annotations for one image to an :class:`Extraction` in reading order.
 
-    Each annotation is line-level, so we convert every box to pixel space and order them
-    deterministically top-to-bottom then left-to-right. Empty input yields an empty extraction with
-    ``confidence == 0.0``. Confidence is the mean of the per-line Vision confidences.
+    Each box is converted to pixel space, then grouped into visual lines (top-to-bottom, fragments
+    within a line left-to-right; see :func:`_group_lines`) so the result reads in deterministic
+    source order regardless of the annotation order Vision happened to return. Empty input yields an
+    empty extraction with ``confidence == 0.0``. Confidence is the mean of the Vision confidences.
     """
-    converted: list[tuple[BBox, str, float]] = []
-    for text, conf, norm_bbox in annotations:
-        bbox = _vision_bbox_to_pixels(norm_bbox, width, height)
-        converted.append((bbox, str(text), float(conf)))
-    # Reading order from the boxes themselves so a shuffled annotation list is reconstructed
-    # deterministically: top edge first, then left edge to break ties on the same line.
-    converted.sort(key=lambda c: (c[0].y, c[0].x))
-    texts = [c[1] for c in converted]
-    confs = [c[2] for c in converted]
-    bboxes = tuple(c[0] for c in converted)
+    converted = [
+        (_vision_bbox_to_pixels(norm_bbox, width, height), str(text), float(conf))
+        for text, conf, norm_bbox in annotations
+    ]
+    lines = _group_lines(converted)
+    texts = [" ".join(it[1] for it in line) for line in lines]
+    confs = [it[2] for it in converted]
+    bboxes = tuple(it[0] for line in lines for it in line)
     return Extraction(
         frame=frame,
         text="\n".join(texts),
