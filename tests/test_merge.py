@@ -5,6 +5,7 @@ import pytest
 
 from vce.merge import (
     build_provenance,
+    merge_results,
     merge_snippets,
     write_provenance,
 )
@@ -161,8 +162,7 @@ def test_provenance_has_entry_per_source_extraction():
     c = make_extraction("class Bar:\n    pass", ms=2000)
     extractions = [a, b, c]
 
-    merged = merge_snippets(extractions)
-    provenance = build_provenance(extractions, merged)
+    provenance = build_provenance(merge_results(extractions))
 
     assert len(provenance) == len(extractions)
     assert set(provenance[0]) == {"timestamp", "screenshot", "raw_ocr", "cleaned_code"}
@@ -184,27 +184,47 @@ def test_provenance_attributes_per_extraction_when_one_frame_feeds_two_clusters(
         frame=frame, text="def foo():\n    return 1", confidence=0.9, backend="paddle"
     )
     vision = Extraction(frame=frame, text="import numpy as np", confidence=0.9, backend="vision")
-    extractions = [paddle, vision]
 
-    merged = merge_snippets(extractions)
-    assert len(merged) == 2  # distinct transcriptions -> two snippets, both citing the same frame
+    results = merge_results([paddle, vision])
+    assert len(results) == 2  # distinct transcriptions -> two snippets, both citing the same frame
 
-    provenance = build_provenance(extractions, merged)
+    provenance = build_provenance(results)
     by_raw = {e["raw_ocr"]: e["cleaned_code"] for e in provenance}
     assert by_raw["def foo():\n    return 1"] == "def foo():\n    return 1"
     assert by_raw["import numpy as np"] == "import numpy as np"
 
 
+def test_provenance_membership_is_exact_under_merge_fn():
+    # With a merge_fn the cleaned code need not resemble any raw OCR, so attribution cannot fall
+    # back on text similarity. Two extractions from one frame land in separate clusters; each must
+    # be tied to ITS cluster's reconciled code via the retained membership, not guessed.
+    frame = Frame(path=Path("/frames/hard.png"), timestamp_ms=0)
+    alpha = Extraction(frame=frame, text="alpha alpha alpha", confidence=0.9, backend="a")
+    beta = Extraction(frame=frame, text="beta beta beta", confidence=0.9, backend="b")
+
+    def reconcile(cluster):
+        # Opaque, text-unrelated output keyed off the cluster's content.
+        return f"<<reconciled:{cluster[0].text.split()[0]}>>"
+
+    results = merge_results([alpha, beta], merge_fn=reconcile)
+    assert len(results) == 2
+
+    provenance = build_provenance(results)
+    by_raw = {e["raw_ocr"]: e["cleaned_code"] for e in provenance}
+    assert by_raw["alpha alpha alpha"] == "<<reconciled:alpha>>"
+    assert by_raw["beta beta beta"] == "<<reconciled:beta>>"
+
+
 def test_provenance_is_ordered_by_timestamp():
     a = make_extraction("a = 1", ms=3000)
     b = make_extraction("b = 2", ms=10)
-    provenance = build_provenance([a, b], merge_snippets([a, b]))
+    provenance = build_provenance(merge_results([a, b]))
     assert [e["timestamp"] for e in provenance] == [10, 3000]
 
 
 def test_write_provenance_round_trips(tmp_path):
     a = make_extraction("a = 1", ms=0)
-    entries = build_provenance([a], merge_snippets([a]))
+    entries = build_provenance(merge_results([a]))
     out = tmp_path / "out.provenance.json"
 
     write_provenance(out, entries)

@@ -27,6 +27,12 @@ The work splits into three small, independently testable pieces, mirrored by thr
 * **provenance serialization** (:func:`build_provenance`, :func:`write_provenance`) — emit the
   sidecar mapping every source extraction to the cleaned code it contributed to.
 
+These run in one pass: :func:`merge_results` clusters once and returns each snippet paired with the
+exact extractions that formed it. :func:`merge_snippets` is a thin convenience that drops the
+membership; :func:`build_provenance` consumes it. Keeping the membership from the merge step (rather
+than reconstructing it from frames and text similarity afterwards) is what makes provenance exact
+when a frame feeds several snippets or a ``merge_fn`` rewrites the cleaned text.
+
 Conflicts (multiple genuinely different transcriptions that happened to cluster together, with no
 clear confidence winner) and low-confidence representatives are **flagged in**
 :attr:`~vce.types.MergedSnippet.notes` rather than silently resolved, so a human can audit them.
@@ -38,6 +44,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from vce.bench import levenshtein_distance
@@ -167,6 +174,74 @@ def _build_notes(
     return "; ".join(notes)
 
 
+@dataclass(frozen=True)
+class MergeResult:
+    """A merged snippet together with the exact extractions that produced it.
+
+    :func:`merge_results` returns these so the precise extraction→snippet membership established
+    during clustering is *retained* rather than reconstructed afterwards. :func:`build_provenance`
+    relies on this to attribute each extraction's cleaned code exactly, even when one frame feeds
+    several snippets or an injected ``merge_fn`` rewrites the text (cases where re-deriving
+    membership from frames and text similarity would be ambiguous).
+    """
+
+    snippet: MergedSnippet
+    extractions: tuple[Extraction, ...]
+
+
+def merge_results(
+    extractions: Sequence[Extraction],
+    *,
+    similarity_threshold: float = DEFAULT_SIMILARITY,
+    low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE,
+    conflict_margin: float = DEFAULT_CONFLICT_MARGIN,
+    merge_fn: MergeFn | None = None,
+) -> list[MergeResult]:
+    """Cluster and merge ``extractions``, returning each snippet paired with its member extractions.
+
+    This is the single source of truth for the merge: it clusters by normalized edit-distance
+    similarity, keeps the highest-confidence representative of each group as the cleaned ``code``,
+    records every contributing frame in :attr:`~vce.types.MergedSnippet.sources`, flags conflicting
+    and low-confidence merges in :attr:`~vce.types.MergedSnippet.notes`, and — crucially — keeps the
+    exact extractions that formed each snippet so provenance can be built without re-deriving
+    membership. :func:`merge_snippets` and :func:`build_provenance` are both expressed in terms of
+    this, so they never disagree about which extraction went where.
+
+    Pure and deterministic: identical inputs yield identical output, ordered by each snippet's
+    earliest source frame (timestamp, then path). See :func:`merge_snippets` for the argument
+    semantics; they are identical.
+
+    Raises:
+        ValueError: if any threshold is outside ``[0, 1]``.
+    """
+    for name, value in (
+        ("similarity_threshold", similarity_threshold),
+        ("low_confidence_threshold", low_confidence_threshold),
+        ("conflict_margin", conflict_margin),
+    ):
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{name} must be within [0, 1], got {value}")
+
+    results: list[MergeResult] = []
+    for cluster in _cluster(extractions, similarity_threshold):
+        representative = _choose_representative(cluster)
+        code = merge_fn(cluster) if merge_fn is not None else representative.text
+        sources = tuple(sorted((e.frame for e in cluster), key=_frame_sort_key))
+        notes = _build_notes(
+            cluster,
+            representative,
+            low_confidence_threshold=low_confidence_threshold,
+            conflict_margin=conflict_margin,
+        )
+        snippet = MergedSnippet(code=code, sources=sources, notes=notes)
+        results.append(MergeResult(snippet=snippet, extractions=tuple(cluster)))
+
+    results.sort(
+        key=lambda r: _frame_sort_key(r.snippet.sources[0]) if r.snippet.sources else (0, "")
+    )
+    return results
+
+
 def merge_snippets(
     extractions: Sequence[Extraction],
     *,
@@ -183,7 +258,9 @@ def merge_snippets(
     :attr:`~vce.types.MergedSnippet.notes` rather than silently resolved.
 
     Pure and deterministic: identical inputs yield identical output, ordered by each snippet's
-    earliest source frame (timestamp, then path).
+    earliest source frame (timestamp, then path). This is a thin convenience over
+    :func:`merge_results` for callers who only need the snippets; pair it with that function (and
+    :func:`build_provenance`) when you also need the audit sidecar.
 
     Args:
         extractions: Per-frame extractions to merge. May be empty (returns ``[]``).
@@ -201,96 +278,51 @@ def merge_snippets(
     Raises:
         ValueError: if any threshold is outside ``[0, 1]``.
     """
-    for name, value in (
-        ("similarity_threshold", similarity_threshold),
-        ("low_confidence_threshold", low_confidence_threshold),
-        ("conflict_margin", conflict_margin),
-    ):
-        if not 0.0 <= value <= 1.0:
-            raise ValueError(f"{name} must be within [0, 1], got {value}")
-
-    merged: list[MergedSnippet] = []
-    for cluster in _cluster(extractions, similarity_threshold):
-        representative = _choose_representative(cluster)
-        code = merge_fn(cluster) if merge_fn is not None else representative.text
-        sources = tuple(sorted((e.frame for e in cluster), key=_frame_sort_key))
-        notes = _build_notes(
-            cluster,
-            representative,
+    return [
+        result.snippet
+        for result in merge_results(
+            extractions,
+            similarity_threshold=similarity_threshold,
             low_confidence_threshold=low_confidence_threshold,
             conflict_margin=conflict_margin,
+            merge_fn=merge_fn,
         )
-        merged.append(MergedSnippet(code=code, sources=sources, notes=notes))
-
-    merged.sort(key=lambda m: _frame_sort_key(m.sources[0]) if m.sources else (0, ""))
-    return merged
+    ]
 
 
-def build_provenance(
-    extractions: Sequence[Extraction], merged: Sequence[MergedSnippet]
-) -> list[dict[str, object]]:
+def build_provenance(results: Sequence[MergeResult]) -> list[dict[str, object]]:
     """Build the provenance sidecar: one entry per source extraction, linked to its cleaned code.
 
     Each entry is ``{timestamp, screenshot, raw_ocr, cleaned_code}`` where ``timestamp`` is the
     frame's ``timestamp_ms``, ``screenshot`` is the frame image path, ``raw_ocr`` is the original
-    per-frame transcription, and ``cleaned_code`` is the merged snippet that extraction fed into.
-    This is the audit trail: every cleaned snippet can be traced back to the exact frames (and
-    their raw OCR) it was derived from. Entries are ordered by timestamp, then path, for
+    per-frame transcription, and ``cleaned_code`` is the cleaned code of the snippet that extraction
+    fed into. This is the audit trail: every cleaned snippet can be traced back to the exact frames
+    (and their raw OCR) it was derived from. Entries are ordered by timestamp, then path, for
     determinism.
 
-    Attribution is per *extraction*, not per frame: a single frame can yield more than one
-    extraction (e.g. a hard frame re-run through two backends, or several cropped regions at one
-    timestamp), and those can land in different clusters. Keying only by frame would let the last
-    snippet written for that frame clobber the others and mislabel an extraction's cleaned code, so
-    each extraction is matched to the snippet whose sources include its frame, disambiguated by
-    text similarity when a frame feeds several snippets (see :func:`_snippet_for`).
+    Attribution is exact and per-*extraction*. It reads the membership recorded by
+    :func:`merge_results` (``MergeResult.extractions``) instead of reconstructing it from frames and
+    text similarity, so it stays correct even when one frame feeds several snippets or an injected
+    ``merge_fn`` rewrites the cleaned text — cases where similarity-based matching could attribute an
+    extraction to the wrong snippet.
 
     Args:
-        extractions: The same extractions passed to :func:`merge_snippets`.
-        merged: The snippets returned by :func:`merge_snippets` over those extractions.
+        results: The :class:`MergeResult` list returned by :func:`merge_results`.
     """
-    # Precompute frame -> contributing snippets once (O(M)) so each extraction's lookup is O(1)
-    # rather than a full scan of ``merged``; the whole pass is O(N + M) instead of O(N * M),
-    # which matters when a long video yields many extractions and snippets.
-    frame_to_snippets: dict[Frame, list[MergedSnippet]] = {}
-    for snippet in merged:
-        for frame in snippet.sources:
-            frame_to_snippets.setdefault(frame, []).append(snippet)
-
     entries: list[dict[str, object]] = []
-    for extraction in extractions:
-        snippet = _snippet_for(extraction, frame_to_snippets)
-        entries.append(
-            {
-                "timestamp": extraction.frame.timestamp_ms,
-                "screenshot": str(extraction.frame.path),
-                "raw_ocr": extraction.text,
-                "cleaned_code": snippet.code if snippet is not None else "",
-            }
-        )
+    for result in results:
+        for extraction in result.extractions:
+            entries.append(
+                {
+                    "timestamp": extraction.frame.timestamp_ms,
+                    "screenshot": str(extraction.frame.path),
+                    "raw_ocr": extraction.text,
+                    "cleaned_code": result.snippet.code,
+                }
+            )
 
     entries.sort(key=lambda e: (e["timestamp"], e["screenshot"]))
     return entries
-
-
-def _snippet_for(
-    extraction: Extraction, frame_to_snippets: dict[Frame, list[MergedSnippet]]
-) -> MergedSnippet | None:
-    """Find the merged snippet ``extraction`` contributed to, or ``None`` if it contributed to none.
-
-    ``frame_to_snippets`` maps each frame to the snippets whose ``sources`` include it (built once
-    by :func:`build_provenance`), so candidate lookup is O(1). With one candidate the answer is
-    unambiguous. When the same frame fed several snippets, the extraction is attributed to the
-    candidate whose cleaned ``code`` is most similar to the extraction's own text — i.e. the cluster
-    it actually belongs to — with ties broken by the snippets' deterministic order in ``merged``.
-    """
-    candidates = frame_to_snippets.get(extraction.frame, [])
-    if not candidates:
-        return None
-    if len(candidates) == 1:
-        return candidates[0]
-    norm = _normalize(extraction.text)
-    return max(candidates, key=lambda m: _similarity(norm, _normalize(m.code)))
 
 
 def write_provenance(path: Path | str, entries: Sequence[dict[str, object]]) -> None:
