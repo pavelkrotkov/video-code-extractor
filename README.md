@@ -28,6 +28,19 @@ flowchart LR
 
 Early scaffolding. Stages are tracked as GitHub issues under the project epic; the shared
 types (`vce.types`) and the `ExtractionBackend` protocol (`vce.backends.base`) are in place.
+The stages are now wired end-to-end behind the `vce extract` command.
+
+## Usage
+
+```bash
+vce extract LESSON.mp4 --out build/        # -> build/LESSON.py + build/LESSON.provenance.json
+```
+
+Frames are sampled (`--fps`, plus scene cuts) → de-duplicated → gated for code-likeness
+(`--score-threshold`) → optionally cropped (`--crop X,Y,W,H`) → transcribed → merged into a clean
+script plus a provenance sidecar. The `--backend` flag picks the primary (cheap) backend; with
+`paddleocr` selected, frames it reads with low confidence are escalated to the vision backend
+(`--escalate-below`, needs `OPENAI_API_KEY`; disable with `--no-escalate`).
 
 ## Develop
 
