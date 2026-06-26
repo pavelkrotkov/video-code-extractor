@@ -122,6 +122,29 @@ def test_escalation_only_for_low_confidence_kept_frames(tmp_path, synthetic_fram
     assert {f.timestamp_ms for f in primary.calls} == {0, 1000, 2000}
 
 
+def test_escalation_kept_only_when_it_reads_as_code(tmp_path, synthetic_frames):
+    # All three frames are low-confidence on the primary, so escalation runs for each. The vision
+    # backend returns usable code only for frame@1000; for the others it returns prose. The prose
+    # results must be discarded in favor of the gate-passing primary text, not overwrite it.
+    def primary_fn(frame):
+        return (CODE, 0.3)  # code-like (passes the gate) but low confidence (triggers escalation)
+
+    def vision_fn(frame):
+        return ("def bar():\n    return 9", 0.99) if frame.timestamp_ms == 1000 else (PROSE, 0.99)
+
+    primary = FakeBackend("primary", primary_fn)
+    escalation = FakeBackend("vision", vision_fn)
+    pipeline = Pipeline(primary, _config(tmp_path, escalate_below=0.6), escalation=escalation)
+    result = pipeline.run(Path("lesson.mp4"))
+
+    # Nothing is dropped: every frame survives via either the vision code or the primary fallback.
+    assert result.frames_kept == 3
+    provenance = json.loads(result.provenance_path.read_text())
+    by_ts = {e["timestamp"]: e["cleaned_code"] for e in provenance}
+    assert by_ts[1000] == "def bar():\n    return 9"  # adopted the code-like vision result
+    assert by_ts[0] == CODE and by_ts[2000] == CODE  # kept the primary where vision wasn't code
+
+
 def test_no_escalation_when_backend_absent(tmp_path, synthetic_frames):
     primary = FakeBackend("primary", lambda f: (CODE, 0.1))  # below any threshold
     pipeline = Pipeline(primary, _config(tmp_path, escalate_below=0.6))  # no escalation wired

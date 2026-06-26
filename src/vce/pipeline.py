@@ -163,7 +163,13 @@ class Pipeline:
         if score_code_likeness(frame, extraction.text).score < self._config.score_threshold:
             return None
         if self._escalation is not None and extraction.confidence < self._config.escalate_below:
-            extraction = self._escalation.extract(image, frame)
+            escalated = self._escalation.extract(image, frame)
+            # Only adopt the escalation if it *also* reads as code. Vision is the accuracy tier, so
+            # a code-like result is preferred — but an empty or off-target response must not discard
+            # the primary transcription that already passed the gate (which would silently drop the
+            # snippet from the script and provenance).
+            if score_code_likeness(frame, escalated.text).score >= self._config.score_threshold:
+                extraction = escalated
         return extraction
 
     def run(self, video: Path) -> PipelineResult:
