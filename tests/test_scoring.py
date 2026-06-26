@@ -63,6 +63,8 @@ def test_brace_style_class_header_scores_high():
 
 def test_sql_is_recognized_as_code():
     assert _score("SELECT name FROM users WHERE active = true") > 0.3
+    # single-letter SQL aliases/columns must still be recognized
+    assert _score("SELECT a.id, b.name FROM users a JOIN orders b ON a.id = b.uid") > 0.3
 
 
 def test_html_is_recognized_as_code():

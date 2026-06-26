@@ -31,7 +31,10 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
     (
         re.compile(
             r"(?is)\bselect\b"
-            r"(?:(?!\b(?:the|of|a|an|to|please|your|our|you|this|that|these|those)\b)[\s\S]){0,120}?"
+            # block prose words between SELECT and FROM, but allow single-letter SQL aliases:
+            # "a"/"an" only count as English articles when followed by whitespace ("a date"),
+            # not when used as a column/alias ("a.id", "a, b").
+            r"(?:(?!\b(?:the|of|to|please|your|our|you|this|that|these|those)\b)(?!\ban?\s)[\s\S]){0,120}?"
             r"\bfrom\b"
         ),
         0.4,
@@ -47,8 +50,8 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
     ),
     # shell / package-manager lines.
     (re.compile(r"(?m)^\s*\$ |\bpip install\b|\bnpm install\b|\bapt-get\b|\bcargo\s+\w+"), 0.35),
-    # HTML / XML tags.
-    (re.compile(r"</?[a-zA-Z][\w:-]*(?:\s[^<>]*)?/?>"), 0.3),
+    # HTML / XML tags (single line: [^<>\n] so it can't span lines of comparison operators).
+    (re.compile(r"</?[a-zA-Z][\w:-]*(?:[ \t][^<>\n]*)?/?>"), 0.3),
     # multi-character operators that are rare in prose.
     (re.compile(r"==|!=|<=|>=|=>|->|&&|\|\||\+=|-=|::"), 0.3),
     # single ``=`` assignment at the start of a line (lookahead so a trailing ``x =`` matches).
@@ -61,7 +64,8 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
         0.25,
     ),
     # function call: identifier followed by parentheses, excluding prose plurals like "word(s)".
-    (re.compile(r"\b\w+\((?![sS]\)|[eE][sS]\))[^)]*\)"), 0.25),
+    # [^)\n] keeps the match on one line (no multi-line spans across unmatched parens).
+    (re.compile(r"\b\w+\((?![sS]\)|[eE][sS]\))[^)\n]*\)"), 0.25),
     # statement-terminating semicolons (optionally followed by a trailing comment).
     (re.compile(r"(?m);\s*(?:#.*|//.*)?$"), 0.25),
     # indentation: an indented line that starts with a code-ish char (not a bullet/arrow), so
