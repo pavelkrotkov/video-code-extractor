@@ -40,12 +40,15 @@ def _phash(frame: Frame) -> ImageHash:
     ``OSError`` deep inside the dedup loop.
     """
     import imagehash
-    from PIL import Image, UnidentifiedImageError
+    from PIL import Image
 
     try:
         with Image.open(frame.path) as img:
             return imagehash.phash(img)
-    except (OSError, UnidentifiedImageError) as exc:
+    except Exception as exc:
+        # This helper does exactly one risky thing — open and hash an image — so wrap *any*
+        # failure (missing path, permission, unrecognized format, or a decoder/imagehash error
+        # on corrupt pixel data) into a clear ValueError instead of leaking it into the loop.
         raise ValueError(f"cannot open frame image at {frame.path}: {exc}") from exc
 
 
