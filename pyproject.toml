@@ -11,9 +11,11 @@ dependencies = [
 
 [project.optional-dependencies]
 # PaddleOCR is heavy; keep it out of the base install and CI.
+# Pinned to 2.x: 3.x dropped the show_log arg and the ocr(cls=...) call signature this
+# backend is written against (the nested polygon/(text, conf) result format also changed).
 paddle = [
-    "paddlepaddle>=2.6",
-    "paddleocr>=2.7",
+    "paddlepaddle>=2.6,<3.0",
+    "paddleocr>=2.7,<3.0",
 ]
 
 [project.scripts]

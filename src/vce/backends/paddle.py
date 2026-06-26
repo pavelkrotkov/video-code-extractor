@@ -43,11 +43,12 @@ def _to_extraction(raw: Any, frame: Frame) -> Extraction:
     with an unexpected shape are skipped rather than crashing the whole frame, since PaddleOCR's
     result structure varies across versions.
     """
-    page = raw[0] if raw else None
+    page = raw[0] if isinstance(raw, (list, tuple)) and raw else None
+    entries = page if isinstance(page, (list, tuple)) else []
     texts: list[str] = []
     confs: list[float] = []
     bboxes: list[BBox] = []
-    for entry in page or []:
+    for entry in entries:
         try:
             polygon, (text, conf) = entry[0], entry[1]
             bbox, conf_value = _poly_to_bbox(polygon), float(conf)

@@ -63,6 +63,14 @@ def test_to_extraction_empty_list_does_not_crash():
     assert _to_extraction([], FRAME).text == ""
 
 
+@pytest.mark.parametrize("raw", [None, 0, 42, "unexpected", [None], [42]])
+def test_to_extraction_tolerates_non_list_shapes(raw):
+    # a truthy-but-not-subscriptable/iterable result must not raise
+    ext = _to_extraction(raw, FRAME)
+    assert ext.text == ""
+    assert ext.bboxes == ()
+
+
 def test_to_extraction_maps_lines_conf_and_boxes():
     ext = _to_extraction(PADDLE_RESULT, FRAME)
     assert ext.text == "import jax\ndef f():"
