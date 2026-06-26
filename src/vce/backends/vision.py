@@ -40,7 +40,8 @@ def _strip_fence(content: str) -> str:
     match = _FENCE_RE.search(content)
     if match:
         return match.group(1).strip("\n")
-    return content.strip()
+    # Unfenced fallback: strip only surrounding newlines so the first line keeps its indentation.
+    return content.strip("\n")
 
 
 def _confidence(text: str) -> float:
@@ -104,11 +105,17 @@ class VisionLLMBackend:
         )
         if not response.choices:
             raise RuntimeError("OpenAI returned no choices for the vision request")
-        content = response.choices[0].message.content or ""
+        choice = response.choices[0]
+        content = choice.message.content or ""
         text = _strip_fence(content)
+        confidence = _confidence(text)
+        # A completion truncated at the output-token limit is partial code; cap its confidence so
+        # the merge stage doesn't treat a silently-cut snippet as a reliable extraction.
+        if getattr(choice, "finish_reason", None) == "length":
+            confidence = min(confidence, 0.3)
         return Extraction(
             frame=frame,
             text=text,
-            confidence=_confidence(text),
+            confidence=confidence,
             backend=self.name,
         )

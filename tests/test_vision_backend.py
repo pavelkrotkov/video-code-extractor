@@ -19,13 +19,14 @@ FRAME = Frame(path=Path("f.jpg"), timestamp_ms=0)
 class FakeChatClient:
     """Mimics the OpenAI client surface: client.chat.completions.create(...).choices[0].message."""
 
-    def __init__(self, content):
+    def __init__(self, content, finish_reason="stop"):
         self.captured = {}
 
         def create(**kwargs):
             self.captured = kwargs
             message = SimpleNamespace(content=content)
-            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+            choice = SimpleNamespace(message=message, finish_reason=finish_reason)
+            return SimpleNamespace(choices=[choice])
 
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
 
@@ -77,6 +78,17 @@ def test_confidence_low_for_empty_text():
 
 def test_strip_fence_drops_leading_newline_keeps_indentation():
     assert _strip_fence("```python\n\n    indented = 1\n```") == "    indented = 1"
+
+
+def test_strip_fence_unfenced_preserves_indentation():
+    # raw (unfenced) model output must keep the first line's indentation
+    assert _strip_fence("\n    return x\n") == "    return x"
+
+
+def test_extract_caps_confidence_on_truncated_completion(png):
+    fake = FakeChatClient("```python\nimport jax\n```", finish_reason="length")
+    ext = VisionLLMBackend(client=fake).extract(png, FRAME)
+    assert ext.confidence <= 0.3
 
 
 def test_extract_raises_on_empty_choices(png):
