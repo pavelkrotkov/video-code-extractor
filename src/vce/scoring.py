@@ -1,13 +1,71 @@
 """Stage 3 — score frames for code-likeness (the real "does this frame contain code?" gate).
 
-Stub: implemented in the "Code-likeness scoring" issue.
+Scene-change detection only answers "did pixels change?"; this answers "does this frame contain
+code?", so non-code frames (narrator, slide titles, browser chrome) are dropped before the
+expensive crop/extract/merge stages.
+
+The score is a weighted sum of *structural* signals (def/class headers, imports, operators, block
+colons, indentation, calls) plus a deliberately tiny weight for bare keywords. Structure is what
+separates code from prose: English contains words like "if", "for", "return", and "class", but not
+``def name(``, ``==``, ``x = y``, or indented ``...:`` blocks. Each signal contributes once
+(presence, not count) and the total saturates at ``1.0``, keeping the score bounded and stable.
 """
 
 from __future__ import annotations
 
+import re
+
 from vce.types import Candidate, Frame
+
+# (compiled pattern, weight). Order is irrelevant; each contributes at most once.
+_SIGNALS: list[tuple[re.Pattern[str], float]] = [
+    # function / class definitions — require a name and an opening ``(`` or ``:`` so prose
+    # like "the class later" does not match.
+    (re.compile(r"\b(?:def|function|fn)\s+\w+\s*\(|\bclass\s+\w+\s*[(:]"), 0.5),
+    # import statements (anchored to line start so "From the beginning" is not a hit).
+    (re.compile(r"(?m)^\s*from\s+[\w.]+\s+import\b|^\s*import\s+[\w.]+|#include\b"), 0.4),
+    # block headers ending in a colon.
+    (
+        re.compile(
+            r"(?m)^\s*(?:if|elif|else|for|while|def|class|try|except|finally|with|match|case|switch)\b.*:\s*$"
+        ),
+        0.35,
+    ),
+    # shell / package-manager lines.
+    (re.compile(r"(?m)^\s*\$ |\bpip install\b|\bnpm install\b|\bapt-get\b|\bcargo\s+\w+"), 0.35),
+    # multi-character operators that are rare in prose.
+    (re.compile(r"==|!=|<=|>=|=>|->|&&|\|\||\+=|-=|::"), 0.3),
+    # single ``=`` assignment at the start of a line.
+    (re.compile(r"(?m)^\s*[\w.\[\]\"']+\s*=\s*[^=]"), 0.25),
+    # function call: identifier immediately followed by parentheses.
+    (re.compile(r"\b\w+\([^)]*\)"), 0.25),
+    # statement-terminating semicolons.
+    (re.compile(r"(?m);\s*$"), 0.25),
+    # indentation: at least one indented, non-blank line.
+    (re.compile(r"(?m)^[ \t]+\S"), 0.2),
+    # brackets and braces.
+    (re.compile(r"[{}\[\]]"), 0.15),
+    # snake_case / camelCase / dotted.names identifiers.
+    (re.compile(r"\b[a-z]+_[a-z0-9_]+\b|\b[a-z]+[A-Z]\w*\b|\b\w+\.\w+\b"), 0.12),
+    # code comments.
+    (re.compile(r"(?m)(?:^|\s)(?:#|//|/\*)"), 0.1),
+    # bare keywords — intentionally tiny, since these also appear in English.
+    (
+        re.compile(
+            r"\b(?:def|class|import|from|return|elif|lambda|yield|async|await|const|let|var|void|struct)\b"
+        ),
+        0.05,
+    ),
+]
+
+
+def _score_text(text: str) -> float:
+    if not text.strip():
+        return 0.0
+    total = sum(weight for pattern, weight in _SIGNALS if pattern.search(text))
+    return min(1.0, total)
 
 
 def score_code_likeness(frame: Frame, text: str) -> Candidate:
     """Return a ``0.0``..``1.0`` code-likeness score for ``frame`` given its OCR ``text``."""
-    raise NotImplementedError("see issue: Code-likeness scoring")
+    return Candidate(frame=frame, score=_score_text(text))
