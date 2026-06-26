@@ -143,6 +143,7 @@ def test_extract_without_ocrmac_installed_raises(monkeypatch, tmp_path):
         MacOSVisionBackend().extract(_render_png(tmp_path), FRAME)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS Apple Vision")
 @pytest.mark.macos
 def test_real_apple_vision_reads_rendered_text(tmp_path):
     """Integration check against real Apple Vision OCR (skipped off macOS)."""
