@@ -65,8 +65,9 @@ def test_crop_region_distinct_names_across_frames(tmp_path):
     d2.mkdir()
     img.save(d1 / "frame_000001.jpg")
     img.save(d2 / "frame_000001.jpg")
+    # same stem AND same timestamp, different source dir -> must still differ (path digest)
     f1 = Frame(path=d1 / "frame_000001.jpg", timestamp_ms=0)
-    f2 = Frame(path=d2 / "frame_000001.jpg", timestamp_ms=1000)
+    f2 = Frame(path=d2 / "frame_000001.jpg", timestamp_ms=0)
     crops = tmp_path / "crops"
     assert crop_region(f1, BBox(0, 0, 10, 10), crops) != crop_region(f2, BBox(0, 0, 10, 10), crops)
 

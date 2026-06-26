@@ -8,6 +8,7 @@ region.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -40,8 +41,9 @@ def merge_boxes(boxes: Iterable[BBox]) -> BBox:
 def crop_region(frame: Frame, region: BBox, out_dir: Path) -> Path:
     """Crop ``region`` from ``frame``'s image and write it under ``out_dir``; return the path.
 
-    The output filename encodes the frame's timestamp and the region, so crops of different
-    frames (even ones whose paths share a stem) or different regions never collide.
+    The output filename encodes a digest of the frame's full source path, its timestamp, and the
+    region, so crops of different frames (even ones whose paths share a stem and timestamp, e.g.
+    ``frame_000001.jpg`` at 0 ms from two different lessons) or different regions never collide.
     Raises ``ValueError`` if the region is empty, has negative coordinates, or extends outside
     the image bounds. Validation runs before ``out_dir`` is created, so a failed call never
     leaves an empty directory behind.
@@ -58,8 +60,9 @@ def crop_region(frame: Frame, region: BBox, out_dir: Path) -> Path:
         cropped = img.crop((region.x, region.y, right, bottom))
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
+        source_digest = hashlib.sha1(str(frame.path).encode()).hexdigest()[:8]
         out_path = out_dir / (
-            f"{frame.path.stem}_{frame.timestamp_ms}"
+            f"{frame.path.stem}_{frame.timestamp_ms}_{source_digest}"
             f"_{region.x}_{region.y}_{region.width}_{region.height}.png"
         )
         cropped.save(out_path)
