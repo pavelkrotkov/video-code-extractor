@@ -214,3 +214,11 @@ def test_main_with_missing_fixtures_dir_returns_error(capsys, tmp_path):
     assert rc == 1
     err = capsys.readouterr().err
     assert "fixtures directory does not exist" in err
+
+
+def test_main_returns_error_when_all_backends_fail(capsys, labeled):
+    # Every backend is skipped, so nothing is benchmarked -> non-zero exit.
+    rc = main(backends=[FailingBackend()], labeled_frames=labeled)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no backend was successfully benchmarked" in err

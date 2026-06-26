@@ -289,6 +289,14 @@ def main(
         backends = [PaddleOCRBackend(), VisionLLMBackend()]
     report = run_benchmark(backends, labeled_frames)
     print(format_report(report))
+    if report.winner is None:
+        # Every backend was skipped (all unavailable/failed) — nothing was actually compared, so
+        # exit non-zero rather than letting CI/scripts treat a zero-backend run as a success.
+        print(
+            "Error: no backend was successfully benchmarked (all unavailable or failed)",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
