@@ -6,7 +6,7 @@ import pytest
 from vce.frames import (
     FFmpegNotFoundError,
     FrameExtractionError,
-    _timestamp_for,
+    _parse_pts_ms,
     extract_frames,
     scene_change_frames,
 )
@@ -14,10 +14,18 @@ from vce.frames import (
 requires_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
 
-def test_timestamp_for():
-    assert _timestamp_for(1, 1.0) == 0
-    assert _timestamp_for(2, 1.0) == 1000
-    assert _timestamp_for(3, 2.0) == 1000
+def test_parse_pts_ms_reads_showinfo_lines_only():
+    stderr = (
+        "[Parsed_showinfo_1 @ 0x1] n:   0 pts:     0 pts_time:0\n"
+        "[Parsed_showinfo_1 @ 0x1] n:   1 pts:  1000 pts_time:1.5\n"
+        "Input #0, from 'weird_pts_time:9.mp4': metadata\n"  # not a showinfo frame line
+    )
+    assert _parse_pts_ms(stderr) == [0, 1500]
+
+
+def test_parse_pts_ms_clamps_negative():
+    stderr = "[Parsed_showinfo_0 @ 0x1] n:   0 pts:-2 pts_time:-0.080000\n"
+    assert _parse_pts_ms(stderr) == [0]
 
 
 def test_extract_frames_rejects_nonpositive_fps(tmp_path):
