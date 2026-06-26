@@ -236,9 +236,9 @@ def merge_results(
         snippet = MergedSnippet(code=code, sources=sources, notes=notes)
         results.append(MergeResult(snippet=snippet, extractions=tuple(cluster)))
 
-    results.sort(
-        key=lambda r: _frame_sort_key(r.snippet.sources[0]) if r.snippet.sources else (0, "")
-    )
+    # Every cluster is seeded by at least one extraction, so ``sources`` is never empty here and
+    # ``sources[0]`` (the earliest frame) is safe to use as the ordering key.
+    results.sort(key=lambda r: _frame_sort_key(r.snippet.sources[0]))
     return results
 
 
@@ -328,9 +328,12 @@ def build_provenance(results: Sequence[MergeResult]) -> list[dict[str, object]]:
 def write_provenance(path: Path | str, entries: Sequence[dict[str, object]]) -> None:
     """Serialize provenance ``entries`` to ``path`` as pretty-printed, UTF-8 JSON.
 
-    Kept separate from :func:`build_provenance` so the in-memory provenance can be built and
-    asserted on without touching the disk.
+    Creates the parent directory if needed, so writing a sidecar to a new or nested output
+    directory doesn't raise ``FileNotFoundError``. Kept separate from :func:`build_provenance` so
+    the in-memory provenance can be built and asserted on without touching the disk.
     """
-    Path(path).write_text(
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         json.dumps(list(entries), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )

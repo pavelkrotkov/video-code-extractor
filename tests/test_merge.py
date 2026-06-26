@@ -232,3 +232,13 @@ def test_write_provenance_round_trips(tmp_path):
     loaded = json.loads(out.read_text(encoding="utf-8"))
     assert loaded == entries
     assert out.read_text(encoding="utf-8").endswith("\n")
+
+
+def test_write_provenance_creates_missing_parent_dirs(tmp_path):
+    a = make_extraction("a = 1", ms=0)
+    entries = build_provenance(merge_results([a]))
+    out = tmp_path / "nested" / "dir" / "out.provenance.json"  # parents don't exist yet
+
+    write_provenance(out, entries)
+
+    assert json.loads(out.read_text(encoding="utf-8")) == entries
