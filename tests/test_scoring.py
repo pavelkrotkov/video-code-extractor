@@ -94,6 +94,25 @@ def test_semicolon_with_trailing_comment_counts():
     assert _score("x = 1;  // initialize counter") > 0.3
 
 
+def test_prose_select_a_date_from_stays_low():
+    assert _score("select a date from the list") < 0.2
+
+
+@pytest.mark.parametrize("heading", ["class agenda:", "class labels:"])
+def test_prose_class_heading_stays_low(heading):
+    # lower-case prose "class …:" headings must not be read as class definitions
+    assert _score(heading) < 0.2
+
+
+def test_typed_brace_function_header_scores_high():
+    assert _score("public static void main(String[] args) {\n    doWork();\n}") > 0.6
+
+
+def test_indented_slide_arrow_bullet_is_not_high():
+    # a workflow bullet from a slide must not reach the code range
+    assert _score("  -> crop likely code regions") < 0.4
+
+
 @pytest.mark.parametrize("text", [PYTHON, JS, PROSE, "", "x", "pip install x"])
 def test_scores_are_bounded(text):
     assert 0.0 <= _score(text) <= 1.0

@@ -19,9 +19,11 @@ from vce.types import Candidate, Frame
 
 # (compiled pattern, weight). Order is irrelevant; each contributes at most once.
 _SIGNALS: list[tuple[re.Pattern[str], float]] = [
-    # function / class definitions — require a name and an opening ``(``, ``:`` or ``{`` so prose
-    # like "the class later" does not match, while brace-style (Java/JS/C#) headers do.
-    (re.compile(r"\b(?:def|function|fn)\s+\w+\s*\(|\bclass\s+\w+\s*[({:]"), 0.5),
+    # function / class definitions. Functions need a name + ``(``; classes additionally require a
+    # PascalCase name + ``(``/``:``/``{`` so prose headings like "class agenda:" don't match.
+    (re.compile(r"\b(?:def|function|fn)\s+\w+\s*\(|\bclass\s+[A-Z]\w*\s*[({:]"), 0.5),
+    # typed/brace-style function or block header ending in ``) {`` (Java/C/C++/C#/Go/JS).
+    (re.compile(r"(?m)\)\s*\{\s*$"), 0.3),
     # import statements (anchored to line start so "From the beginning" is not a hit).
     (re.compile(r"(?m)^\s*from\s+[\w.]+\s+import\b|^\s*import\s+[\w.]+|#include\b"), 0.4),
     # SQL: SELECT ... FROM, but reject English stop-words between them so prose like
@@ -34,10 +36,12 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
         ),
         0.4,
     ),
-    # block headers ending in ``:`` or ``{`` (brace languages), with an optional trailing comment.
+    # control-flow block headers ending in ``:`` or ``{``, with an optional trailing comment.
+    # (def/class are intentionally excluded — they're handled, more strictly, by the signal above,
+    # so a prose heading like "class labels:" doesn't score here.)
     (
         re.compile(
-            r"(?m)^\s*(?:if|elif|else|for|while|def|class|try|except|finally|with|match|case|switch)\b.*[:{]\s*(?:#.*|//.*)?$"
+            r"(?m)^\s*(?:if|elif|else|for|while|try|except|finally|with|match|case|switch)\b.*[:{]\s*(?:#.*|//.*)?$"
         ),
         0.35,
     ),
@@ -60,8 +64,9 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
     (re.compile(r"\b\w+\((?![sS]\)|[eE][sS]\))[^)]*\)"), 0.25),
     # statement-terminating semicolons (optionally followed by a trailing comment).
     (re.compile(r"(?m);\s*(?:#.*|//.*)?$"), 0.25),
-    # indentation: at least one indented, non-blank line.
-    (re.compile(r"(?m)^[ \t]+\S"), 0.2),
+    # indentation: an indented line that starts with a code-ish char (not a bullet/arrow), so
+    # indented slide bullets like "  -> crop likely code regions" don't count as code indentation.
+    (re.compile(r"(?m)^[ \t]+[\w({\[\"']"), 0.2),
     # brackets and braces.
     (re.compile(r"[{}\[\]]"), 0.15),
     # snake_case / UPPER_CASE / camelCase / dotted.names identifiers.
