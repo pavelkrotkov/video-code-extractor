@@ -24,8 +24,16 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
     (re.compile(r"\b(?:def|function|fn)\s+\w+\s*\(|\bclass\s+\w+\s*[({:]"), 0.5),
     # import statements (anchored to line start so "From the beginning" is not a hit).
     (re.compile(r"(?m)^\s*from\s+[\w.]+\s+import\b|^\s*import\s+[\w.]+|#include\b"), 0.4),
-    # SQL: require SELECT and FROM together so bare English "from"/"where" don't false-positive.
-    (re.compile(r"(?is)\bselect\b.+?\bfrom\b"), 0.4),
+    # SQL: SELECT ... FROM, but reject English stop-words between them so prose like
+    # "select one of the options from the menu" does not match an actual SELECT list.
+    (
+        re.compile(
+            r"(?is)\bselect\b"
+            r"(?:(?!\b(?:the|of|a|an|to|please|your|our|you|this|that|these|those)\b)[\s\S]){0,120}?"
+            r"\bfrom\b"
+        ),
+        0.4,
+    ),
     # block headers ending in ``:`` or ``{`` (brace languages), with an optional trailing comment.
     (
         re.compile(
@@ -39,8 +47,8 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
     (re.compile(r"</?[a-zA-Z][\w:-]*(?:\s[^<>]*)?/?>"), 0.3),
     # multi-character operators that are rare in prose.
     (re.compile(r"==|!=|<=|>=|=>|->|&&|\|\||\+=|-=|::"), 0.3),
-    # single ``=`` assignment at the start of a line.
-    (re.compile(r"(?m)^\s*[\w.\[\]\"']+\s*=\s*[^=]"), 0.25),
+    # single ``=`` assignment at the start of a line (lookahead so a trailing ``x =`` matches).
+    (re.compile(r"(?m)^\s*[\w.\[\]\"']+\s*=\s*(?!=)"), 0.25),
     # typed / keyword variable declarations: ``const x =``, ``int x =``, ``let y =``.
     (
         re.compile(
@@ -48,10 +56,10 @@ _SIGNALS: list[tuple[re.Pattern[str], float]] = [
         ),
         0.25,
     ),
-    # function call: identifier immediately followed by parentheses.
-    (re.compile(r"\b\w+\([^)]*\)"), 0.25),
-    # statement-terminating semicolons.
-    (re.compile(r"(?m);\s*$"), 0.25),
+    # function call: identifier followed by parentheses, excluding prose plurals like "word(s)".
+    (re.compile(r"\b\w+\((?![sS]\)|[eE][sS]\))[^)]*\)"), 0.25),
+    # statement-terminating semicolons (optionally followed by a trailing comment).
+    (re.compile(r"(?m);\s*(?:#.*|//.*)?$"), 0.25),
     # indentation: at least one indented, non-blank line.
     (re.compile(r"(?m)^[ \t]+\S"), 0.2),
     # brackets and braces.

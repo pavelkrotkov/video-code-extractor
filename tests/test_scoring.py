@@ -80,6 +80,20 @@ def test_prose_with_sql_words_stays_low():
     assert _score(prose) < 0.2
 
 
+def test_prose_select_from_sentence_stays_low():
+    # a sentence with both "select" and "from" must not match the SQL signal
+    assert _score("Please select one of the options from the dropdown menu.") < 0.2
+
+
+def test_prose_pluralization_stays_low():
+    # "individual(s)" / "word(s)" must not trip the function-call signal
+    assert _score("Ask the individual(s) and word(s) you trust about the option(s).") < 0.2
+
+
+def test_semicolon_with_trailing_comment_counts():
+    assert _score("x = 1;  // initialize counter") > 0.3
+
+
 @pytest.mark.parametrize("text", [PYTHON, JS, PROSE, "", "x", "pip install x"])
 def test_scores_are_bounded(text):
     assert 0.0 <= _score(text) <= 1.0
