@@ -172,9 +172,28 @@ def test_crop_is_applied_before_extraction(tmp_path, synthetic_frames):
     pipeline = Pipeline(backend, _config(tmp_path, crop=BBox(0, 0, 16, 16)))
     pipeline.run(Path("lesson.mp4"))
 
-    # Each backend call received a freshly written crop under out/crops, not the raw frame.
-    assert seen and all(p.parent.name == "crops" for p in seen)
+    # Each backend call received a freshly written crop under the per-video crops dir, not the
+    # raw frame. The dir is namespaced by the video stem so a run can't clobber unrelated files.
+    assert seen and all(p.parent.name == "lesson_crops" for p in seen)
     assert all(p.exists() for p in seen)
+
+
+def test_intermediate_dirs_are_namespaced_per_video(tmp_path, monkeypatch):
+    # The frame stages clean their target dir, so it must be per-video (not a generic "frames/")
+    # to avoid deleting a user's unrelated images when --out points at an existing directory.
+    captured = {}
+
+    def fake_extract(video, out_dir, **kwargs):
+        captured["frames_dir"] = out_dir
+        return []
+
+    monkeypatch.setattr(pipeline_mod, "extract_frames", fake_extract)
+    monkeypatch.setattr(pipeline_mod, "scene_change_frames", lambda *a, **k: [])
+
+    Pipeline(FakeBackend("fake", lambda f: (CODE, 0.95)), _config(tmp_path)).run(
+        Path("/videos/lesson.mp4")
+    )
+    assert captured["frames_dir"] == tmp_path / "out" / "lesson_frames"
 
 
 # --- units --------------------------------------------------------------------------------

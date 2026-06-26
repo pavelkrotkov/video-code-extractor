@@ -101,14 +101,27 @@ class PipelineResult:
         return len(self.snippets)
 
 
+def _artifact_base(video: Path) -> str:
+    """Filename stem shared by all of a run's artifacts (script, sidecar, and frame/crop dirs).
+
+    Falls back to ``"extracted"`` when the video name has no stem (e.g. a bare ``.`` path).
+    """
+    return video.stem or "extracted"
+
+
 def _candidate_frames(video: Path, config: PipelineConfig) -> list[Frame]:
     """fps-sampled and scene-cut frames, merged into one timeline-ordered list.
 
     The two sources are complementary (see :mod:`vce.frames`); a frame captured by both at the
     same timestamp is a near-duplicate that the dedup stage collapses. Sorting by
     ``(timestamp, path)`` gives dedup the timeline order it expects and keeps the run deterministic.
+
+    Frames are written to a ``<video>_frames`` directory rather than a generic ``frames/``: the
+    frame stages *clean* their target (unlinking pre-existing ``frame_*.jpg`` / ``scene_*.jpg``)
+    before writing, so a per-video name keeps a run from deleting a user's unrelated images when
+    ``--out`` points at an existing directory.
     """
-    frames_dir = config.out_dir / "frames"
+    frames_dir = config.out_dir / f"{_artifact_base(video)}_frames"
     sampled = extract_frames(video, frames_dir, fps=config.fps)
     scenes = scene_change_frames(video, frames_dir, threshold=config.scene_threshold)
     combined = [*sampled, *scenes]
@@ -181,7 +194,9 @@ class Pipeline:
         """
         video = Path(video)
         config = self._config
-        crops_dir = config.out_dir / "crops"
+        base = _artifact_base(video)
+        # Per-video crop dir, for the same reason as the frames dir (see _candidate_frames).
+        crops_dir = config.out_dir / f"{base}_crops"
 
         frames = _candidate_frames(video, config)
         deduped = dedup_frames(frames, max_distance=config.dedup_max_distance)
@@ -201,7 +216,6 @@ class Pipeline:
         snippets = [r.snippet for r in results]
 
         config.out_dir.mkdir(parents=True, exist_ok=True)
-        base = video.stem or "extracted"
         script_path = config.out_dir / f"{base}.py"
         provenance_path = config.out_dir / f"{base}.provenance.json"
         script_path.write_text(_build_script(snippets), encoding="utf-8")
