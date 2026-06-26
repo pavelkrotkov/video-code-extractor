@@ -70,6 +70,36 @@ def test_confidence_penalizes_ambiguous_markers():
     assert _confidence("[?]" * 20) == pytest.approx(0.1)  # floored
 
 
+def test_confidence_low_for_empty_text():
+    assert _confidence("") == pytest.approx(0.1)
+    assert _confidence("   \n ") == pytest.approx(0.1)
+
+
+def test_strip_fence_drops_leading_newline_keeps_indentation():
+    assert _strip_fence("```python\n\n    indented = 1\n```") == "    indented = 1"
+
+
+def test_extract_raises_on_empty_choices(png):
+    class EmptyChoices:
+        chat = SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **k: SimpleNamespace(choices=[]))
+        )
+
+    with pytest.raises(RuntimeError, match="no choices"):
+        VisionLLMBackend(client=EmptyChoices()).extract(png, FRAME)
+
+
+def test_build_messages_uses_guessed_mime_type(tmp_path):
+    from PIL import Image
+
+    jpg = tmp_path / "crop.jpg"
+    Image.new("RGB", (10, 10), "white").save(jpg)
+    fake = FakeChatClient("```\nok\n```")
+    VisionLLMBackend(client=fake).extract(jpg, FRAME)
+    url = fake.captured["messages"][1]["content"][1]["image_url"]["url"]
+    assert url.startswith("data:image/jpeg;base64,")
+
+
 def test_extract_parses_fenced_response(png):
     backend = VisionLLMBackend(client=FakeChatClient("```python\nimport jax\nx = 1\n```"))
     ext = backend.extract(png, FRAME)

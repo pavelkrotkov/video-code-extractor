@@ -9,6 +9,7 @@ the response→:class:`~vce.types.Extraction` mapping is unit-testable without a
 from __future__ import annotations
 
 import base64
+import mimetypes
 import re
 from pathlib import Path
 from typing import Any, Protocol
@@ -31,15 +32,24 @@ class _ChatClient(Protocol):
 
 
 def _strip_fence(content: str) -> str:
-    """Return the contents of the first fenced code block, or the trimmed text if unfenced."""
+    """Return the contents of the first fenced code block, or the trimmed text if unfenced.
+
+    Strips leading/trailing newlines (not spaces) so an extra blank line after the opening fence
+    is removed while the first code line keeps its indentation.
+    """
     match = _FENCE_RE.search(content)
     if match:
-        return match.group(1).rstrip("\n")
+        return match.group(1).strip("\n")
     return content.strip()
 
 
 def _confidence(text: str) -> float:
-    """Heuristic confidence: start high, penalize each ambiguous ``[?]`` marker the model emits."""
+    """Heuristic confidence: start high, penalize each ambiguous ``[?]`` marker the model emits.
+
+    Empty or whitespace-only output means a failed/blank transcription, so confidence is low.
+    """
+    if not text.strip():
+        return 0.1
     return max(0.1, 0.9 - 0.1 * text.count("[?]"))
 
 
@@ -71,8 +81,9 @@ class VisionLLMBackend:
         return self._client
 
     def _build_messages(self, image_path: Path) -> list[dict[str, Any]]:
-        b64 = base64.b64encode(Path(image_path).read_bytes()).decode("ascii")
-        data_uri = f"data:image/png;base64,{b64}"
+        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+        b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        data_uri = f"data:{mime_type};base64,{b64}"
         return [
             {"role": "system", "content": OCR_SYSTEM_PROMPT},
             {
@@ -91,6 +102,8 @@ class VisionLLMBackend:
             messages=self._build_messages(image_path),
             temperature=0,
         )
+        if not response.choices:
+            raise RuntimeError("OpenAI returned no choices for the vision request")
         content = response.choices[0].message.content or ""
         text = _strip_fence(content)
         return Extraction(
