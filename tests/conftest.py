@@ -20,32 +20,36 @@ def sample_clip(tmp_path_factory):
     if not ffmpeg_available():
         pytest.skip("ffmpeg not installed")
     out = tmp_path_factory.mktemp("video") / "clip.mp4"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=red:s=128x96:d=1",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=blue:s=128x96:d=1",
-            "-filter_complex",
-            "[0][1]concat=n=2:v=1[v]",
-            "-map",
-            "[v]",
-            "-r",
-            "10",
-            "-pix_fmt",
-            "yuv420p",
-            str(out),
-        ],
-        check=True,
-        capture_output=True,
-    )
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=128x96:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=128x96:d=1",
+                "-filter_complex",
+                "[0][1]concat=n=2:v=1[v]",
+                "-map",
+                "[v]",
+                "-r",
+                "10",
+                "-pix_fmt",
+                "yuv420p",
+                str(out),
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
+        pytest.skip(f"ffmpeg could not generate the test clip: {stderr}")
     return out

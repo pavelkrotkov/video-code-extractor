@@ -73,7 +73,7 @@ def _prepare_out_dir(video: Path, out_dir: Path, glob: str) -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in out_dir.glob(glob):
-        stale.unlink()
+        stale.unlink(missing_ok=True)  # tolerate the glob→unlink race
     return out_dir
 
 
