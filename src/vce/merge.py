@@ -109,20 +109,18 @@ def _cluster(
     return clusters
 
 
-def _negastr(path: Path) -> tuple[int, ...]:
-    """Order paths so the *lexicographically smaller* one wins a ``max`` tie-break.
-
-    ``max`` would otherwise prefer the larger path string; negating each code point flips that so
-    the earliest path is chosen, keeping the representative deterministic.
-    """
-    return tuple(-ord(c) for c in str(path))
-
-
 def _choose_representative(cluster: Sequence[Extraction]) -> Extraction:
-    """Pick the clearest extraction: highest confidence, tie-broken by earliest frame then path."""
-    return max(
+    """Pick the clearest extraction: highest confidence, tie-broken by earliest frame then path.
+
+    Uses ``min`` over ``(-confidence, timestamp_ms, path)`` so every component sorts ascending:
+    negating confidence makes the highest-confidence extraction the smallest, and the natural
+    ordering of ``timestamp_ms`` then path string then breaks ties toward the earliest, then
+    lexicographically smallest, path. (Negating code points under ``max`` would mishandle the case
+    where one path is a prefix of another, since tuple length dominates the comparison.)
+    """
+    return min(
         cluster,
-        key=lambda e: (e.confidence, -e.frame.timestamp_ms, _negastr(e.frame.path)),
+        key=lambda e: (-e.confidence, e.frame.timestamp_ms, str(e.frame.path)),
     )
 
 

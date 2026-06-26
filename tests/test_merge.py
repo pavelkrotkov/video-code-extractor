@@ -53,6 +53,22 @@ def test_representative_is_highest_confidence():
     assert merged[0].code == "result = compute(x, v)"  # from the high-confidence extraction
 
 
+def test_representative_path_tiebreak_prefers_lexicographically_smaller_prefix():
+    # Equal confidence and timestamp; the only tie-break left is the path. When one path is a
+    # prefix of the other ("/f/a" vs "/f/a/b"), the lexicographically smaller "/f/a" must win.
+    # (A negated-codepoint tuple under max would wrongly pick the longer path here.)
+    short = Extraction(
+        frame=Frame(path=Path("/f/a"), timestamp_ms=0), text="value = aaaa", confidence=0.9
+    )
+    long = Extraction(
+        frame=Frame(path=Path("/f/a/b"), timestamp_ms=0), text="value = aaab", confidence=0.9
+    )
+    merged = merge_snippets([long, short])  # input order shouldn't matter
+
+    assert len(merged) == 1
+    assert merged[0].code == "value = aaaa"  # from the shorter, lexicographically smaller path
+
+
 def test_empty_returns_empty():
     assert merge_snippets([]) == []
 
