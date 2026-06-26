@@ -24,9 +24,10 @@ OCR_SYSTEM_PROMPT = (
     "no commentary."
 )
 
-# Closing fence is optional (``\Z``) so a truncated response missing its closing ``` still
-# yields the code instead of leaking the opening fence into the output.
-_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)(?:```|\Z)", re.DOTALL)
+# Closing fence must be at the start of a line (MULTILINE ``^```) so triple-backticks *inside*
+# the code (e.g. a Markdown string in a tutorial) aren't mistaken for the close. The optional
+# ``\Z`` means a truncated response missing its closing fence still yields the code.
+_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)(?:^```|\Z)", re.DOTALL | re.MULTILINE)
 
 # OpenAI rejects images larger than 20 MB; fail fast with a clear message before the API call.
 _MAX_IMAGE_BYTES = 20 * 1024 * 1024

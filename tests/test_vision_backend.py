@@ -87,6 +87,12 @@ def test_strip_fence_unfenced_preserves_indentation():
     assert _strip_fence("\n    return x\n") == "    return x"
 
 
+def test_strip_fence_ignores_inline_backticks():
+    # triple-backticks inside the code (not at line start) must not end the block early
+    content = "```python\ndoc = 'see ```x``` inline'\nmore = 1\n```"
+    assert _strip_fence(content) == "doc = 'see ```x``` inline'\nmore = 1"
+
+
 def test_extract_caps_confidence_on_truncated_completion(png):
     fake = FakeChatClient("```python\nimport jax\n```", finish_reason="length")
     ext = VisionLLMBackend(client=fake).extract(png, FRAME)
