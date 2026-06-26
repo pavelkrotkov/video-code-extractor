@@ -34,9 +34,11 @@ def test_extract_frames_rejects_nonpositive_fps(tmp_path):
 
 
 def test_extract_frames_raises_without_ffmpeg(monkeypatch, tmp_path):
+    video = tmp_path / "exists.mp4"
+    video.write_bytes(b"x")  # must exist so validation passes and we reach the ffmpeg check
     monkeypatch.setattr("vce.frames.shutil.which", lambda _: None)
     with pytest.raises(FFmpegNotFoundError):
-        extract_frames(Path("missing.mp4"), tmp_path, fps=1.0)
+        extract_frames(video, tmp_path, fps=1.0)
 
 
 @requires_ffmpeg

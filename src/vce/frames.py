@@ -85,15 +85,20 @@ def _sorted_by_index(paths: Iterable[Path]) -> list[Path]:
     return sorted(paths, key=lambda p: int(p.stem.split("_")[-1]))
 
 
-def _prepare_out_dir(video: Path, out_dir: Path, glob: str) -> Path:
-    """Validate ``video`` exists and return a clean ``out_dir`` with stale ``glob`` files removed.
+def _validate_video(video: Path) -> Path:
+    """Return ``video`` as a Path, raising ``FileNotFoundError`` if it isn't an existing file."""
+    video = Path(video)
+    if not video.is_file():
+        raise FileNotFoundError(f"video not found: {video}")
+    return video
+
+
+def _prepare_out_dir(out_dir: Path, glob: str) -> Path:
+    """Return a clean ``out_dir`` with stale ``glob`` files removed.
 
     Removing pre-existing matches keeps the sampled files aligned with the frames ffmpeg writes
     this run, so timestamps are never mismatched against leftovers from a previous run.
     """
-    video = Path(video)
-    if not video.is_file():
-        raise FileNotFoundError(f"video not found: {video}")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in out_dir.glob(glob):
@@ -113,8 +118,9 @@ def extract_frames(video: Path, out_dir: Path, *, fps: float = 1.0) -> list[Fram
     """Sample ``video`` at ``fps`` into timestamped JPEG frames under ``out_dir``."""
     if fps <= 0:
         raise ValueError("fps must be positive")
+    video = _validate_video(video)  # validate inputs before checking for the ffmpeg binary
     ffmpeg = _require_ffmpeg()
-    out_dir = _prepare_out_dir(video, out_dir, "frame_*.jpg")
+    out_dir = _prepare_out_dir(out_dir, "frame_*.jpg")
     pattern = out_dir / "frame_%06d.jpg"
     stderr = _run_ffmpeg(
         [
@@ -138,8 +144,9 @@ def scene_change_frames(video: Path, out_dir: Path, *, threshold: float = 0.3) -
     """Extract frames at detected scene cuts, timestamped from ffmpeg's ``pts_time``."""
     if not 0.0 < threshold <= 1.0:
         raise ValueError("threshold must be in (0, 1]")
+    video = _validate_video(video)  # validate inputs before checking for the ffmpeg binary
     ffmpeg = _require_ffmpeg()
-    out_dir = _prepare_out_dir(video, out_dir, "scene_*.jpg")
+    out_dir = _prepare_out_dir(out_dir, "scene_*.jpg")
     pattern = out_dir / "scene_%06d.jpg"
     stderr = _run_ffmpeg(
         [
