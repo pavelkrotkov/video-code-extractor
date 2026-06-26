@@ -41,6 +41,22 @@ def test_extract_frames_samples_timestamped_frames(sample_clip, tmp_path):
     assert [f.timestamp_ms for f in frames] == sorted(f.timestamp_ms for f in frames)
 
 
+def test_extract_frames_missing_video_raises_filenotfound(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        extract_frames(tmp_path / "nope.mp4", tmp_path, fps=1.0)
+
+
+@requires_ffmpeg
+def test_extract_frames_cleans_stale_output(sample_clip, tmp_path):
+    stale = tmp_path / "frame_000999.jpg"
+    stale.write_bytes(b"stale")
+    frames = extract_frames(sample_clip, tmp_path, fps=1.0)
+    # the leftover frame_*.jpg must not survive and pollute the chronological ordering
+    assert stale not in {f.path for f in frames}
+    assert not stale.exists()
+    assert frames[0].timestamp_ms == 0
+
+
 @requires_ffmpeg
 def test_scene_change_frames_finds_the_cut(sample_clip, tmp_path):
     frames = scene_change_frames(sample_clip, tmp_path, threshold=0.3)

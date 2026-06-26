@@ -34,13 +34,28 @@ def _timestamp_for(index: int, fps: float) -> int:
     return round((index - 1) * 1000.0 / fps)
 
 
+def _prepare_out_dir(video: Path, out_dir: Path, glob: str) -> Path:
+    """Validate ``video`` exists and return a clean ``out_dir`` with stale ``glob`` files removed.
+
+    Removing pre-existing matches keeps ``sorted(glob(...))`` aligned with the frames ffmpeg
+    writes this run, so timestamps are never mismatched against leftovers from a previous run.
+    """
+    video = Path(video)
+    if not video.is_file():
+        raise FileNotFoundError(f"video not found: {video}")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for stale in out_dir.glob(glob):
+        stale.unlink()
+    return out_dir
+
+
 def extract_frames(video: Path, out_dir: Path, *, fps: float = 1.0) -> list[Frame]:
     """Sample ``video`` at ``fps`` into timestamped JPEG frames under ``out_dir``."""
     if fps <= 0:
         raise ValueError("fps must be positive")
     ffmpeg = _require_ffmpeg()
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = _prepare_out_dir(video, out_dir, "frame_*.jpg")
     pattern = out_dir / "frame_%06d.jpg"
     subprocess.run(
         [
@@ -69,8 +84,7 @@ def scene_change_frames(video: Path, out_dir: Path, *, threshold: float = 0.3) -
     if not 0.0 < threshold <= 1.0:
         raise ValueError("threshold must be in (0, 1]")
     ffmpeg = _require_ffmpeg()
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = _prepare_out_dir(video, out_dir, "scene_*.jpg")
     pattern = out_dir / "scene_%06d.jpg"
     proc = subprocess.run(
         [
@@ -91,4 +105,6 @@ def scene_change_frames(video: Path, out_dir: Path, *, threshold: float = 0.3) -
     )
     times_ms = [round(float(t) * 1000) for t in _PTS_TIME_RE.findall(proc.stderr)]
     paths = sorted(out_dir.glob("scene_*.jpg"))
-    return [Frame(path=path, timestamp_ms=ts) for path, ts in zip(paths, times_ms, strict=False)]
+    # Counts must agree: showinfo emits one pts_time per selected frame, each saved as one file.
+    # strict=True fails loud if that invariant ever breaks rather than silently mispairing.
+    return [Frame(path=path, timestamp_ms=ts) for path, ts in zip(paths, times_ms, strict=True)]
