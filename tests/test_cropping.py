@@ -45,6 +45,32 @@ def test_crop_region_rejects_zero_area(frame_with_red_square, tmp_path):
         crop_region(frame_with_red_square, BBox(0, 0, 0, 10), tmp_path)
 
 
+def test_crop_region_rejects_negative_coords(frame_with_red_square, tmp_path):
+    with pytest.raises(ValueError):
+        crop_region(frame_with_red_square, BBox(-5, 0, 10, 10), tmp_path)
+
+
+def test_crop_region_leaves_no_dir_on_validation_failure(frame_with_red_square, tmp_path):
+    out = tmp_path / "not_created"
+    with pytest.raises(ValueError):
+        crop_region(frame_with_red_square, BBox(90, 90, 50, 50), out)
+    assert not out.exists()
+
+
+def test_crop_region_distinct_names_across_frames(tmp_path):
+    # two frames whose paths share a stem but differ in timestamp must not collide
+    img = Image.new("RGB", (50, 50), "white")
+    d1, d2 = tmp_path / "a", tmp_path / "b"
+    d1.mkdir()
+    d2.mkdir()
+    img.save(d1 / "frame_000001.jpg")
+    img.save(d2 / "frame_000001.jpg")
+    f1 = Frame(path=d1 / "frame_000001.jpg", timestamp_ms=0)
+    f2 = Frame(path=d2 / "frame_000001.jpg", timestamp_ms=1000)
+    crops = tmp_path / "crops"
+    assert crop_region(f1, BBox(0, 0, 10, 10), crops) != crop_region(f2, BBox(0, 0, 10, 10), crops)
+
+
 def test_merge_boxes_overlapping_returns_union():
     merged = merge_boxes([BBox(0, 0, 10, 10), BBox(5, 5, 10, 10)])
     assert merged == BBox(0, 0, 15, 15)
@@ -57,6 +83,12 @@ def test_merge_boxes_disjoint_returns_bounding_box():
 
 def test_merge_boxes_single():
     assert merge_boxes([BBox(3, 4, 5, 6)]) == BBox(3, 4, 5, 6)
+
+
+def test_merge_boxes_accepts_iterator():
+    # a one-shot generator must work (single-pass implementation)
+    gen = (b for b in [BBox(0, 0, 10, 10), BBox(5, 5, 10, 10)])
+    assert merge_boxes(gen) == BBox(0, 0, 15, 15)
 
 
 def test_merge_boxes_empty_raises():
