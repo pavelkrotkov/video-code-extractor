@@ -175,6 +175,26 @@ def test_provenance_has_entry_per_source_extraction():
     assert by_ts[2000]["cleaned_code"] == "class Bar:\n    pass"
 
 
+def test_provenance_attributes_per_extraction_when_one_frame_feeds_two_clusters():
+    # The same frame is run through two backends, producing two very different transcriptions that
+    # land in separate clusters. Each extraction's raw_ocr must map to *its own* cleaned code, not
+    # whichever snippet happened to be written last for that frame.
+    frame = Frame(path=Path("/frames/hard.png"), timestamp_ms=0)
+    paddle = Extraction(
+        frame=frame, text="def foo():\n    return 1", confidence=0.9, backend="paddle"
+    )
+    vision = Extraction(frame=frame, text="import numpy as np", confidence=0.9, backend="vision")
+    extractions = [paddle, vision]
+
+    merged = merge_snippets(extractions)
+    assert len(merged) == 2  # distinct transcriptions -> two snippets, both citing the same frame
+
+    provenance = build_provenance(extractions, merged)
+    by_raw = {e["raw_ocr"]: e["cleaned_code"] for e in provenance}
+    assert by_raw["def foo():\n    return 1"] == "def foo():\n    return 1"
+    assert by_raw["import numpy as np"] == "import numpy as np"
+
+
 def test_provenance_is_ordered_by_timestamp():
     a = make_extraction("a = 1", ms=3000)
     b = make_extraction("b = 2", ms=10)

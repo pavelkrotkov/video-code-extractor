@@ -238,31 +238,49 @@ def build_provenance(
     their raw OCR) it was derived from. Entries are ordered by timestamp, then path, for
     determinism.
 
+    Attribution is per *extraction*, not per frame: a single frame can yield more than one
+    extraction (e.g. a hard frame re-run through two backends, or several cropped regions at one
+    timestamp), and those can land in different clusters. Keying only by frame would let the last
+    snippet written for that frame clobber the others and mislabel an extraction's cleaned code, so
+    each extraction is matched to the snippet whose sources include its frame, disambiguated by
+    text similarity when a frame feeds several snippets (see :func:`_snippet_for`).
+
     Args:
         extractions: The same extractions passed to :func:`merge_snippets`.
         merged: The snippets returned by :func:`merge_snippets` over those extractions.
     """
-    # Map each contributing frame to the cleaned code of the snippet it landed in. Clustering
-    # partitions extractions, so each frame belongs to exactly one merged snippet.
-    frame_to_code: dict[Frame, str] = {}
-    for snippet in merged:
-        for frame in snippet.sources:
-            frame_to_code[frame] = snippet.code
-
     entries: list[dict[str, object]] = []
     for extraction in extractions:
-        frame = extraction.frame
+        snippet = _snippet_for(extraction, merged)
         entries.append(
             {
-                "timestamp": frame.timestamp_ms,
-                "screenshot": str(frame.path),
+                "timestamp": extraction.frame.timestamp_ms,
+                "screenshot": str(extraction.frame.path),
                 "raw_ocr": extraction.text,
-                "cleaned_code": frame_to_code.get(frame, ""),
+                "cleaned_code": snippet.code if snippet is not None else "",
             }
         )
 
     entries.sort(key=lambda e: (e["timestamp"], e["screenshot"]))
     return entries
+
+
+def _snippet_for(extraction: Extraction, merged: Sequence[MergedSnippet]) -> MergedSnippet | None:
+    """Find the merged snippet ``extraction`` contributed to, or ``None`` if it contributed to none.
+
+    Candidates are the snippets whose ``sources`` include the extraction's frame. With one
+    candidate the answer is unambiguous. When the same frame fed several snippets, the extraction
+    is attributed to the candidate whose cleaned ``code`` is most similar to the extraction's own
+    text — i.e. the cluster it actually belongs to — with ties broken by the snippets' deterministic
+    order in ``merged``.
+    """
+    candidates = [m for m in merged if extraction.frame in m.sources]
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    norm = _normalize(extraction.text)
+    return max(candidates, key=lambda m: _similarity(norm, _normalize(m.code)))
 
 
 def write_provenance(path: Path | str, entries: Sequence[dict[str, object]]) -> None:
