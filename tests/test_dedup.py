@@ -73,8 +73,8 @@ def test_hash_func_is_injectable(frames):
 
     def fake_hash(frame):
         calls.append(frame)
-        # map every frame to the same hash so all collapse to the first
-        return _phash(a)
+        # constant hash so every frame collapses to the first, without disk I/O
+        return 0
 
     kept = dedup_frames([a, b, c], hash_func=fake_hash)
     assert kept == [a]
@@ -92,3 +92,8 @@ def test_phash_raises_clear_error_for_missing_file(tmp_path):
     missing = Frame(path=tmp_path / "does-not-exist.png", timestamp_ms=0)
     with pytest.raises(ValueError, match="cannot open frame image"):
         _phash(missing)
+
+
+def test_negative_max_distance_raises(frames):
+    with pytest.raises(ValueError, match="non-negative"):
+        dedup_frames(frames, max_distance=-1)

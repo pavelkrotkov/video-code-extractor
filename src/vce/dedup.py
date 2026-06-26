@@ -71,6 +71,8 @@ def dedup_frames(
             :func:`_phash`, which reads the image from ``frame.path`` and returns an
             ``imagehash.ImageHash``. The returned hashes must support ``a - b`` (Hamming distance).
     """
+    if max_distance < 0:
+        raise ValueError("max_distance must be non-negative")
     kept: list[Frame] = []
     last_hash: Hash | None = None
     for frame in frames:
