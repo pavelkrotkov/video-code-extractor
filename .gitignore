@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+*.egg-info/
+build/
+dist/
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.ty_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+
+# Agent scratch
+.claude/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Course videos — large binaries, never commit
+*.mp4
+*.m3u8
+
+# Pipeline outputs / working dirs
+frames/
+output/
+.vce_cache/
