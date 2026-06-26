@@ -157,6 +157,9 @@ def _run_extract(args: argparse.Namespace) -> int:
         raise CLIError(f"frame extraction failed: {exc}") from exc
     except FileNotFoundError as exc:
         raise CLIError(str(exc)) from exc
+    except OSError as exc:
+        # e.g. PermissionError / disk full while creating the output dir or writing artifacts.
+        raise CLIError(f"I/O error: {exc}") from exc
     except ImportError as exc:
         # e.g. the paddle extra isn't installed; the backend raises with install instructions.
         raise CLIError(str(exc)) from exc

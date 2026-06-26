@@ -170,6 +170,21 @@ def test_bad_threshold_is_clean_error(monkeypatch, capsys):
     assert "score_threshold must be within" in err
 
 
+def test_io_error_is_clean_error(monkeypatch, capsys):
+    # A non-FileNotFound OSError (e.g. PermissionError writing outputs) gets the I/O error path.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def boom():
+        raise PermissionError("output directory is read-only")
+
+    _install_fake_pipeline(monkeypatch, run=boom)
+
+    assert cli.main(["extract", "v.mp4"]) == 1
+    err = capsys.readouterr().err
+    assert "vce: error:" in err
+    assert "I/O error" in err
+
+
 def test_missing_paddle_extra_is_clean_error(monkeypatch, capsys):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
