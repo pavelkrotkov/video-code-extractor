@@ -56,8 +56,8 @@ def levenshtein_distance(a: str, b: str) -> int:
     """Return the character-level Levenshtein (edit) distance between ``a`` and ``b``.
 
     Pure Python, no dependency. Counts the minimum number of single-character insertions,
-    deletions, or substitutions to turn ``a`` into ``b``. Uses a rolling two-row DP for
-    ``O(len(a) * len(b))`` time and ``O(min(len))`` space.
+    deletions, or substitutions to turn ``a`` into ``b``. Uses a single-row DP updated in place
+    for ``O(len(a) * len(b))`` time and ``O(min(len))`` space (no per-row list allocation).
     """
     if a == b:
         return 0
@@ -68,20 +68,20 @@ def levenshtein_distance(a: str, b: str) -> int:
     # Keep the inner loop over the shorter string to minimize the row width.
     if len(a) < len(b):
         a, b = b, a
-    previous = list(range(len(b) + 1))
-    for i, ca in enumerate(a, start=1):
-        current = [i]
+    dp = list(range(len(b) + 1))
+    for ca in a:
+        prev_diag = dp[0]  # dp[j-1] from the previous row (the diagonal)
+        dp[0] += 1
         for j, cb in enumerate(b, start=1):
+            temp = dp[j]
             cost = 0 if ca == cb else 1
-            current.append(
-                min(
-                    previous[j] + 1,  # deletion
-                    current[j - 1] + 1,  # insertion
-                    previous[j - 1] + cost,  # substitution
-                )
+            dp[j] = min(
+                dp[j] + 1,  # deletion
+                dp[j - 1] + 1,  # insertion
+                prev_diag + cost,  # substitution
             )
-        previous = current
-    return previous[-1]
+            prev_diag = temp
+    return dp[-1]
 
 
 def _normalized_levenshtein(pred: str, truth: str) -> float:
@@ -106,7 +106,8 @@ def _token_accuracy(pred: str, truth: str) -> float:
         return 1.0 if not pred_tokens else 0.0
     pred_counts = Counter(pred_tokens)
     truth_counts = Counter(truth_tokens)
-    matched = sum(min(count, pred_counts[token]) for token, count in truth_counts.items())
+    # Counter & Counter is the multiset intersection (per-token min counts), computed in C.
+    matched = sum((pred_counts & truth_counts).values())
     return matched / len(truth_tokens)
 
 
