@@ -198,6 +198,10 @@ class Pipeline:
         # Per-video crop dir, for the same reason as the frames dir (see _candidate_frames).
         crops_dir = config.out_dir / f"{base}_crops"
 
+        # Create the output directory up front so an unwritable ``--out`` fails fast (as a clean
+        # OSError the CLI translates) before any expensive frame extraction / OCR work is wasted.
+        config.out_dir.mkdir(parents=True, exist_ok=True)
+
         frames = _candidate_frames(video, config)
         deduped = dedup_frames(frames, max_distance=config.dedup_max_distance)
 
@@ -215,7 +219,6 @@ class Pipeline:
         )
         snippets = [r.snippet for r in results]
 
-        config.out_dir.mkdir(parents=True, exist_ok=True)
         script_path = config.out_dir / f"{base}.py"
         provenance_path = config.out_dir / f"{base}.provenance.json"
         script_path.write_text(_build_script(snippets), encoding="utf-8")

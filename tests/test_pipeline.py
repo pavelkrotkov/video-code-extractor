@@ -105,6 +105,18 @@ def test_gate_drops_non_code_frames(tmp_path, synthetic_frames):
     assert {e["timestamp"] for e in provenance} == {0, 2000}
 
 
+def test_all_frames_gated_out_yields_empty_outputs(tmp_path, synthetic_frames):
+    # Every frame transcribes to prose -> empty extractions -> merge_results([]) path. The run must
+    # still produce valid, empty artifacts (empty script, empty provenance, zero counts).
+    pipeline = Pipeline(FakeBackend("fake", lambda f: (PROSE, 0.95)), _config(tmp_path))
+    result = pipeline.run(Path("lesson.mp4"))
+
+    assert result.frames_kept == 0
+    assert result.num_snippets == 0
+    assert result.script_path.read_text() == ""
+    assert json.loads(result.provenance_path.read_text()) == []
+
+
 def test_escalation_only_for_low_confidence_kept_frames(tmp_path, synthetic_frames):
     # Primary reads frame@1000 with low confidence -> escalate; the others stay on primary.
     def primary_fn(frame):
