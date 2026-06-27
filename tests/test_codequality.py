@@ -95,6 +95,26 @@ def test_clean_transcription_leaves_valid_code_untouched():
     assert clean_transcription(code) == code
 
 
+def test_clean_preserves_multiline_numeric_literal_in_valid_code():
+    # P1 (codex): rows of a real multi-line literal look like rendered arrays but must NOT be
+    # stripped. Valid source is returned untouched.
+    code = "data = [\n    [1, 2, 3, 4],\n    [5, 6, 7, 8],\n]"
+    assert clean_transcription(code) == code
+
+
+def test_clean_strips_inline_notebook_prompts():
+    # codex: a prompt sharing a visual line with its payload must still be stripped.
+    assert clean_transcription("In [1]: import numpy as np") == "import numpy as np"
+    assert clean_transcription("Out[1]: array([1, 2, 3])") == ""
+
+
+def test_clean_strips_nonnumeric_output_after_out_prompt():
+    # codex: an Out[n]: prompt opens an output region; the following repr is dropped even when it is
+    # not numeric (e.g. a <... object at 0x...> repr).
+    raw = "model = Net()\nOut[7]:\n<Net object at 0x10f>"
+    assert clean_transcription(raw) == "model = Net()"
+
+
 # --- suspicion ----------------------------------------------------------------------------
 
 
@@ -128,3 +148,11 @@ def test_reconcile_cluster_prefers_complete_valid_variant():
 def test_reconcile_cluster_strips_chrome_from_winner():
     a = _ext("In [2]:\nx = compute()\nOut[2]:\narray([1, 2, 3, 4, 5])", ms=0)
     assert reconcile_cluster([a]) == "x = compute()"
+
+
+def test_reconcile_prefers_confidence_over_length_for_non_python():
+    # codex: for non-Python clusters (valid==0 for all), a higher-confidence clean read must beat a
+    # lower-confidence variant that merely has an extra noise line.
+    clean = _ext("const x = 5;", ms=0, confidence=0.95)
+    noisy = _ext("const x = 5;\n|", ms=1000, confidence=0.80)  # extra cursor line, longer
+    assert reconcile_cluster([noisy, clean]) == "const x = 5;"

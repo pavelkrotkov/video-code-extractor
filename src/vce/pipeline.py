@@ -30,7 +30,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from vce.backends.base import ExtractionBackend
-from vce.codequality import is_suspect, reconcile_cluster
+from vce.codequality import clean_transcription, is_suspect, reconcile_cluster
 from vce.cropping import crop_region
 from vce.dedup import dedup_frames
 from vce.frames import extract_frames, scene_change_frames
@@ -252,13 +252,16 @@ class Pipeline:
                 extractions.append(extraction)
 
         # Reconcile overlapping captures of one cell into the most complete valid variant, cleaned
-        # of notebook chrome / rendered output, via the merge step's reconciliation seam.
+        # of notebook chrome / rendered output, via the merge step's reconciliation seam. Cluster on
+        # output-stripped code (``cluster_text``) so two captures of one cell that differ only in
+        # their rendered output still group together instead of duplicating in the script.
         results = merge_results(
             extractions,
             similarity_threshold=config.similarity_threshold,
             low_confidence_threshold=config.low_confidence_threshold,
             conflict_margin=config.conflict_margin,
             merge_fn=reconcile_cluster,
+            cluster_text=clean_transcription,
         )
         results = [_flag_unresolved(r) for r in results]
         snippets = [r.snippet for r in results]

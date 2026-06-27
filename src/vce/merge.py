@@ -92,7 +92,10 @@ def _frame_sort_key(frame: Frame) -> tuple[int, str]:
 
 
 def _cluster(
-    extractions: Sequence[Extraction], similarity_threshold: float
+    extractions: Sequence[Extraction],
+    similarity_threshold: float,
+    *,
+    cluster_text: Callable[[str], str] | None = None,
 ) -> list[list[Extraction]]:
     """Greedily group extractions whose normalized texts are within the similarity threshold.
 
@@ -101,11 +104,18 @@ def _cluster(
     stable seed (rather than a moving representative) keeps the grouping order-deterministic. This
     is intentionally simple — adequate for the static-snippet path where captures of one block are
     mutually similar — and documented as such rather than a full transitive-closure clustering.
+
+    ``cluster_text`` optionally pre-processes each extraction's text before the internal whitespace
+    normalization, *for the similarity key only*. The pipeline uses it to compare on output-stripped
+    code so two captures of one cell with different rendered outputs still cluster (instead of each
+    cleaning down to the same snippet and duplicating it). It never touches the extractions kept in
+    the clusters, so representative selection and provenance still see the raw text.
     """
+    prepare = cluster_text or (lambda text: text)
     clusters: list[list[Extraction]] = []
     seeds: list[str] = []
     for extraction in extractions:
-        norm = _normalize(extraction.text)
+        norm = _normalize(prepare(extraction.text))
         for i, seed in enumerate(seeds):
             if _similarity(norm, seed) >= similarity_threshold:
                 clusters[i].append(extraction)
@@ -196,6 +206,7 @@ def merge_results(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE,
     conflict_margin: float = DEFAULT_CONFLICT_MARGIN,
     merge_fn: MergeFn | None = None,
+    cluster_text: Callable[[str], str] | None = None,
 ) -> list[MergeResult]:
     """Cluster and merge ``extractions``, returning each snippet paired with its member extractions.
 
@@ -208,8 +219,10 @@ def merge_results(
     this, so they never disagree about which extraction went where.
 
     Pure and deterministic: identical inputs yield identical output, ordered by each snippet's
-    earliest source frame (timestamp, then path). See :func:`merge_snippets` for the argument
-    semantics; they are identical.
+    earliest source frame (timestamp, then path). See :func:`merge_snippets` for the shared argument
+    semantics. ``cluster_text`` is an extra seam (see :func:`_cluster`): an optional pre-normalizer
+    applied to each text *for the similarity key only*, so a caller can cluster on, say,
+    output-stripped code while representatives and provenance still use the raw text.
 
     Raises:
         ValueError: if any threshold is outside ``[0, 1]``.
@@ -223,7 +236,7 @@ def merge_results(
             raise ValueError(f"{name} must be within [0, 1], got {value}")
 
     results: list[MergeResult] = []
-    for cluster in _cluster(extractions, similarity_threshold):
+    for cluster in _cluster(extractions, similarity_threshold, cluster_text=cluster_text):
         representative = _choose_representative(cluster)
         code = merge_fn(cluster) if merge_fn is not None else representative.text
         sources = tuple(sorted((e.frame for e in cluster), key=_frame_sort_key))

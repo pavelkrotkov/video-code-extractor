@@ -30,8 +30,9 @@ from collections.abc import Sequence
 from vce.types import Extraction
 
 # Jupyter/IPython cell prompts and execution-count chrome: "In [12]:", "Out[3]:", "In [ ]:".
-# These are interface chrome the notebook renders around a cell, never part of the source itself.
-_NOTEBOOK_PROMPT = re.compile(r"^\s*(?:In|Out)\s*\[\s*[\d ]*\]\s*:?\s*$")
+# Matches the prompt as a line *prefix* (with named kind) so it is stripped whether it sits on its
+# own line or shares a line with the cell payload, e.g. "In [1]: import numpy as np".
+_PROMPT = re.compile(r"^[ \t]*(?P<kind>In|Out)\s*\[\s*[\d ]*\]\s*:?[ \t]*")
 
 # A bare line made up entirely of numeric / array punctuation — the fingerprint of *rendered*
 # output (a printed ndarray slice or numeric table), not source.
@@ -96,16 +97,16 @@ def parses_as_python(text: str) -> bool:
     return True
 
 
-def _is_chrome_or_output(line: str) -> bool:
-    """Is ``line`` notebook chrome (a cell prompt) or rendered array/numeric output, not source?
+def _is_rendered_output(line: str) -> bool:
+    """Is ``line`` a rendered array / numeric repr (printed output), not source?
 
-    Rendered output is recognised conservatively: a reasonably long, digit-bearing line with no
-    assignment (``=``) that is either pure numeric/bracket content or a printed array/tensor/frame
-    repr. The no-assignment and length guards keep real code — ``shape = (1, 28, 28)``,
-    ``arr = np.zeros(3)`` — from being mistaken for output.
+    Recognised conservatively: a reasonably long, digit-bearing line with no assignment (``=``) that
+    is either pure numeric/bracket content or a printed ``array``/``tensor``/``matrix`` repr. The
+    no-assignment and length guards keep real code — ``shape = (1, 28, 28)``, ``arr = np.zeros(3)`` —
+    from being mistaken for output. Note this is only ever applied to transcriptions that *do not*
+    already parse as valid Python (see :func:`clean_transcription`), so a genuine multi-line literal
+    row like ``[1, 2, 3, 4],`` inside otherwise-valid source is never reached, let alone stripped.
     """
-    if _NOTEBOOK_PROMPT.match(line):
-        return True
     stripped = line.strip()
     if len(stripped) < 12 or "=" in stripped or not any(ch.isdigit() for ch in stripped):
         return False
@@ -117,24 +118,60 @@ def _is_chrome_or_output(line: str) -> bool:
     return False
 
 
+def _has_prompt(text: str) -> bool:
+    """Does any line carry a Jupyter cell prompt (``In [n]:`` / ``Out[n]:``)? Definitive chrome."""
+    return any(_PROMPT.match(line) for line in text.splitlines())
+
+
 def contains_notebook_chrome(text: str) -> bool:
-    """Does any line of ``text`` look like notebook chrome or rendered output (see :func:`is_suspect`)?"""
-    return any(_is_chrome_or_output(line) for line in text.splitlines())
+    """Does any line of ``text`` carry a notebook cell prompt or rendered output (see :func:`is_suspect`)?"""
+    return any(_PROMPT.match(line) or _is_rendered_output(line) for line in text.splitlines())
 
 
 def clean_transcription(text: str, *, language: str | None = None) -> str:
-    """Return ``text`` with notebook chrome and rendered output lines removed.
+    """Return ``text`` with notebook chrome and rendered output removed.
 
-    Drops Jupyter cell prompts (``In [n]:`` / ``Out[n]:``) and lines that are clearly rendered
-    output (a printed array / tensor / numeric table) rather than source, then trims the leading and
-    trailing blank lines that removal can leave behind. Interior structure is otherwise untouched —
-    valid code passes through unchanged. The *raw* transcription is never mutated: this returns a
-    cleaned copy, and callers keep the original for provenance.
+    Two safeguards, in order:
 
-    ``language`` is accepted for forward-compatibility (so per-language cleaning can be added without
-    a signature change) but is not required by the current, language-agnostic filters.
+    1. **Never corrupt valid source.** If ``text`` has no cell prompts and already parses as Python
+       it is real code, not polluted output, so it is returned untouched (only edge blank lines
+       trimmed). This is what keeps a genuine multi-line literal — rows like ``[1, 2, 3, 4],`` — from
+       being mistaken for a rendered array and silently deleted. (The prompt check matters because a
+       stray ``Out[1]: array(...)`` line can itself happen to parse as a Python annotation.)
+    2. **Otherwise strip notebook chrome.** Jupyter cell prompts are removed whether standalone or
+       inline (``In [1]: import x`` keeps ``import x``); an ``Out[n]:`` prompt opens an *output
+       region* whose following lines (the rendered repr, numeric or not) are dropped until the next
+       prompt or blank line; and standalone rendered-array/numeric lines are dropped too. Leading and
+       trailing blank lines left behind are trimmed.
+
+    The *raw* transcription is never mutated: this returns a cleaned copy, and callers keep the
+    original for provenance. ``language`` is accepted for forward-compatibility (per-language cleaning
+    can be added without a signature change) but the current filters are language-agnostic.
     """
-    kept = [line for line in text.splitlines() if not _is_chrome_or_output(line)]
+    if not _has_prompt(text) and parses_as_python(text):
+        return text.strip("\n")
+
+    kept: list[str] = []
+    in_output = False
+    for line in text.splitlines():
+        prompt = _PROMPT.match(line)
+        if prompt:
+            rest = line[prompt.end() :]
+            if prompt.group("kind") == "Out":
+                in_output = True  # rendered output follows; drop this line's payload and the rest
+                continue
+            in_output = False  # an input prompt: real code resumes on/after this line
+            if rest.strip():
+                kept.append(rest)  # keep inline code after "In [n]:"
+            continue
+        if not line.strip():
+            in_output = False  # a blank line closes an output block
+            kept.append(line)
+            continue
+        if in_output or _is_rendered_output(line):
+            continue
+        kept.append(line)
+
     while kept and not kept[0].strip():
         kept.pop(0)
     while kept and not kept[-1].strip():
@@ -145,34 +182,44 @@ def clean_transcription(text: str, *, language: str | None = None) -> str:
 def is_suspect(text: str) -> bool:
     """Is this transcription structurally broken or polluted enough to distrust as code?
 
-    Returns ``True`` when the text carries notebook chrome / rendered output, or when it *looks* like
-    Python but does not compile (the usual fingerprint of OCR-mangled brackets, f-string braces, or
-    identifiers). Empty / non-code text is never suspect here — dropping that is the upstream
-    code-likeness gate's job, not this signal's. This is the validity half of the escalation
-    decision: it keeps high-confidence-but-broken OCR eligible for the accuracy tier.
+    Returns ``True`` when the text carries notebook cell prompts, or when it *looks* like Python but
+    does not compile (the usual fingerprint of OCR-mangled brackets, f-string braces, or
+    identifiers), or — for non-Python transcriptions — when it carries rendered output lines. Empty /
+    non-code text is never suspect here; dropping that is the upstream code-likeness gate's job. This
+    is the validity half of the escalation decision: it keeps high-confidence-but-broken OCR eligible
+    for the accuracy tier.
+
+    The branch order matters: a *valid* Python snippet that merely contains numeric literal rows
+    (``[1, 2, 3, 4],``) must not be flagged just because those rows resemble rendered output, so the
+    rendered-output check only applies once we know the text is not valid Python.
     """
     if not text.strip():
         return False
-    if contains_notebook_chrome(text):
+    if _has_prompt(text):
         return True
-    return detect_language(text) == "python" and not parses_as_python(text)
+    if detect_language(text) == "python":
+        return not parses_as_python(text)
+    return any(_is_rendered_output(line) for line in text.splitlines())
 
 
-def _variant_rank(extraction: Extraction) -> tuple[int, int, int, float, int]:
-    """Sort key for reconciliation: most complete *valid* variant first (see :func:`reconcile_cluster`).
+def _variant_rank(extraction: Extraction) -> tuple[int, float, int, int, int]:
+    """Sort key for reconciliation: best variant first (see :func:`reconcile_cluster`).
 
-    Ascending-``max`` tuple: prefer a transcription that parses as its detected language, then the
-    most complete (most non-blank lines, then longest), then the highest confidence, tie-broken by
-    the earliest frame (``-timestamp`` so earliest wins under ``max``). Every component is a number,
-    so the ordering is total and deterministic.
+    Ascending-``max`` tuple, in priority order:
+
+    * **valid** — a transcription that parses as Python beats one that does not, independent of
+      keyword-based detection, so keyword-less code (``y = jnp.ones((3, 3))``) still wins over a
+      broken sibling. Non-Python clusters score ``0`` here and fall through to the next keys.
+    * **confidence** — the OCR confidence. Placed above completeness so that for non-Python (and
+      tied-validity) clusters a higher-confidence clean read is not lost to a lower-confidence
+      variant that merely has an extra cursor/noise line, matching the merge's representative choice.
+    * **completeness** — most non-blank lines, then longest, as a final content tie-break.
+    * **earliest frame** — ``-timestamp`` so the earliest capture wins under ``max``.
     """
     text = extraction.text
     nonblank = sum(1 for line in text.splitlines() if line.strip())
-    # Prefer any variant that parses as Python, independent of keyword-based language detection, so
-    # keyword-less code (``y = jnp.ones((3, 3))``) still wins over a broken sibling. Non-Python
-    # clusters parse as nothing here and fall through to the completeness/confidence tie-breakers.
     valid = int(parses_as_python(text))
-    return (valid, nonblank, len(text), extraction.confidence, -extraction.frame.timestamp_ms)
+    return (valid, extraction.confidence, nonblank, len(text), -extraction.frame.timestamp_ms)
 
 
 def reconcile_cluster(extractions: Sequence[Extraction]) -> str:

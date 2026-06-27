@@ -228,6 +228,26 @@ def test_overlapping_captures_reconcile_to_one_valid_block(tmp_path, synthetic_f
     assert result.script_path.read_text() == good + "\n"
 
 
+def test_captures_differing_only_in_rendered_output_merge_to_one(tmp_path, synthetic_frames):
+    # codex: the same cell captured with different long rendered outputs must collapse to one
+    # snippet. Clustering happens on output-stripped code, so the differing arrays don't split them.
+    big_a = "x = compute()\nOut[1]:\narray([" + ", ".join(str(i) for i in range(60)) + "])"
+    big_b = "x = compute()\nOut[1]:\narray([" + ", ".join(str(i * 3) for i in range(60)) + "])"
+
+    def fn(frame):
+        return (big_b, 0.95) if frame.timestamp_ms == 1000 else (big_a, 0.95)
+
+    pipeline = Pipeline(FakeBackend("fake", fn), _config(tmp_path))
+    result = pipeline.run(Path("lesson.mp4"))
+
+    assert result.num_snippets == 1  # one cell, not duplicated by its differing output
+    assert result.script_path.read_text() == "x = compute()\n"
+    # All three frames are still cited in provenance with their raw OCR intact.
+    provenance = json.loads(result.provenance_path.read_text())
+    assert {e["timestamp"] for e in provenance} == {0, 1000, 2000}
+    assert any("array(" in e["raw_ocr"] for e in provenance)
+
+
 def test_crop_is_applied_before_extraction(tmp_path, synthetic_frames):
     seen: list[Path] = []
 
