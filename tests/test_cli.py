@@ -27,6 +27,8 @@ class _FakeResult:
     num_snippets = 2
     frames_kept = 5
     frames_total = 8
+    num_flagged = 0
+    snippets = ()
 
 
 def _install_fake_pipeline(monkeypatch, *, run=None):

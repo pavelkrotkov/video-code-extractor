@@ -50,6 +50,12 @@ show_missing = true
 [tool.ty.environment]
 root = ["src"]
 
+[tool.ty.src]
+# tools/download_lessons.py is a standalone PEP-723 script with its own inline dependencies
+# (requests, beautifulsoup4) that are deliberately not project dependencies; exclude it from the
+# package type-check rather than pull those into the env just to satisfy the checker.
+exclude = ["tools/"]
+
 [dependency-groups]
 dev = [
     "pip-audit>=2.10.0",

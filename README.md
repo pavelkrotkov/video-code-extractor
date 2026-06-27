@@ -173,6 +173,15 @@ are available it may make remote API calls.
 
 ### Course downloader
 
+The `--backend` flag picks the primary (cheap) backend; with `macos-vision` selected, frames it reads
+with low confidence **or** that are code-like but structurally suspect (don't parse, or carry
+notebook chrome / rendered output) are escalated to the vision backend (`--escalate-below`, needs
+`OPENAI_API_KEY`; disable with `--no-escalate`). Recognition confidence alone is a poor proxy for
+code correctness, so the escalation decision combines it with a language-aware validity signal.
+Running local-only (`--no-escalate`) still surfaces snippets it couldn't validate as *flagged for
+review* rather than presenting them as clean. Intermediate frames and crops are written to per-video
+`<video>_frames` / `<video>_crops` sub-directories of `--out`.
+
 [`tools/download_lessons.py`](tools/download_lessons.py) is a separate, uv-compatible script used
 to fetch DeepLearning.AI lessons during development:
 

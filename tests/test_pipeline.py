@@ -165,6 +165,90 @@ def test_no_escalation_when_backend_absent(tmp_path, synthetic_frames):
     assert result.frames_kept == 3  # single-tier, nothing dropped by escalation
 
 
+# Code-like, would-be high confidence, but does not parse (unclosed bracket): the issue #24 case.
+BROKEN_CODE = "def __init__(self, max_len):\n    self.data = ["
+
+
+def test_high_confidence_invalid_code_is_eligible_for_escalation(tmp_path, synthetic_frames):
+    # Issue #24 regression: confidence-only escalation would never fire at 1.0. A code-like
+    # transcription that fails to parse must still be escalated when a backend is configured.
+    fixed = "def __init__(self, max_len):\n    self.data = []"
+    primary = FakeBackend("primary", lambda f: (BROKEN_CODE, 1.0))
+    escalation = FakeBackend("vision", lambda f: (fixed, 0.9))
+    pipeline = Pipeline(primary, _config(tmp_path, escalate_below=0.6), escalation=escalation)
+
+    result = pipeline.run(Path("lesson.mp4"))
+
+    # Escalation ran for every kept frame despite confidence 1.0 (all are structurally suspect),
+    # and the repaired, valid code replaced the broken local read.
+    assert {f.timestamp_ms for f in escalation.calls} == {0, 1000, 2000}
+    assert result.num_flagged == 0
+    assert result.script_path.read_text() == fixed + "\n"
+
+
+def test_local_only_run_flags_unresolved_low_quality(tmp_path, synthetic_frames):
+    # With no escalation backend (the --no-escalate / no-key path), a code-like snippet that never
+    # validates is flagged for review rather than silently presented as clean.
+    pipeline = Pipeline(FakeBackend("fake", lambda f: (BROKEN_CODE, 0.95)), _config(tmp_path))
+
+    result = pipeline.run(Path("lesson.mp4"))
+
+    assert result.num_snippets == 1
+    assert result.num_flagged == 1
+    assert any("unresolved" in s.notes for s in result.snippets)
+
+
+def test_notebook_chrome_excluded_from_code_but_kept_in_provenance(tmp_path, synthetic_frames):
+    raw = "In [1]:\nimport numpy as np\nOut[1]:\narray([0., 0., 0.])"
+    pipeline = Pipeline(FakeBackend("fake", lambda f: (raw, 0.95)), _config(tmp_path))
+
+    result = pipeline.run(Path("lesson.mp4"))
+
+    # Cleaned script drops the cell prompts and rendered output, keeping only the source line.
+    assert result.script_path.read_text() == "import numpy as np\n"
+    provenance = json.loads(result.provenance_path.read_text())
+    assert all(e["raw_ocr"] == raw for e in provenance)  # raw OCR audited verbatim
+    assert all(e["cleaned_code"] == "import numpy as np" for e in provenance)
+
+
+def test_overlapping_captures_reconcile_to_one_valid_block(tmp_path, synthetic_frames):
+    # Three captures of one cell; the middle frame's last keyword is OCR-mangled so it won't parse.
+    # They cluster, and reconciliation keeps the single most-complete valid variant — one block, not
+    # three duplicates, and not the broken one (even though it reads at higher confidence).
+    good = "def f():\n    return 42"
+    broken = "def f()\n    return 42"  # missing colon -> won't parse, but clusters with good
+
+    def fn(frame):
+        return (broken, 0.99) if frame.timestamp_ms == 1000 else (good, 0.90)
+
+    pipeline = Pipeline(FakeBackend("fake", fn), _config(tmp_path))
+    result = pipeline.run(Path("lesson.mp4"))
+
+    assert result.num_snippets == 1
+    assert result.script_path.read_text() == good + "\n"
+
+
+def test_captures_differing_only_in_rendered_output_merge_to_one(tmp_path, synthetic_frames):
+    # codex: the same cell captured with different long rendered outputs must collapse to one
+    # snippet. Clustering happens on output-stripped code, so the differing arrays don't split them.
+    big_a = "x = compute()\nOut[1]:\narray([" + ", ".join(str(i) for i in range(60)) + "])"
+    big_b = "x = compute()\nOut[1]:\narray([" + ", ".join(str(i * 3) for i in range(60)) + "])"
+
+    def fn(frame):
+        return (big_b, 0.95) if frame.timestamp_ms == 1000 else (big_a, 0.95)
+
+    pipeline = Pipeline(FakeBackend("fake", fn), _config(tmp_path))
+    result = pipeline.run(Path("lesson.mp4"))
+
+    assert result.num_snippets == 1  # one cell, not duplicated by its differing output
+    assert result.num_flagged == 0  # the output-only difference is not flagged as a conflict
+    assert result.script_path.read_text() == "x = compute()\n"
+    # All three frames are still cited in provenance with their raw OCR intact.
+    provenance = json.loads(result.provenance_path.read_text())
+    assert {e["timestamp"] for e in provenance} == {0, 1000, 2000}
+    assert any("array(" in e["raw_ocr"] for e in provenance)
+
+
 def test_crop_is_applied_before_extraction(tmp_path, synthetic_frames):
     seen: list[Path] = []
 
@@ -175,11 +259,13 @@ def test_crop_is_applied_before_extraction(tmp_path, synthetic_frames):
     # Wrap extract to capture the image path the backend was handed.
     original = backend.extract
 
-    def spy(image_path, frame):
+    def spy(image_path: Path, frame: Frame) -> Extraction:
         seen.append(image_path)
         return original(image_path, frame)
 
-    backend.extract = spy  # type: ignore[method-assign]
+    # Monkeypatch the bound method to capture the image path; ty compares against the unbound
+    # method type (with self), so the structurally-correct spy still needs a suppression here.
+    backend.extract = spy  # ty: ignore[invalid-assignment]
 
     pipeline = Pipeline(backend, _config(tmp_path, crop=BBox(0, 0, 16, 16)))
     pipeline.run(Path("lesson.mp4"))

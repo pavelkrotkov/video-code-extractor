@@ -177,6 +177,14 @@ def _run_extract(args: argparse.Namespace) -> int:
         f"Wrote {result.num_snippets} snippet(s) from {result.frames_kept}/{result.frames_total} "
         f"kept frame(s) to:\n  {result.script_path}\n  {result.provenance_path}"
     )
+    if result.num_flagged:
+        # Identify low-quality snippets explicitly (esp. on a local-only --no-escalate run) instead
+        # of presenting them as clean: one stderr line per flagged snippet, with its source frames.
+        print(f"vce: {result.num_flagged} snippet(s) flagged for review:", file=sys.stderr)
+        for snippet in result.snippets:
+            if snippet.notes:
+                where = ", ".join(frame.timecode for frame in snippet.sources)
+                print(f"vce:   [{where}] {snippet.notes}", file=sys.stderr)
     return 0
 
 
