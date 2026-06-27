@@ -174,13 +174,13 @@ are available it may make remote API calls.
 ### Course downloader
 
 [`tools/download_lessons.py`](tools/download_lessons.py) is a separate, uv-compatible script used
-to fetch the DeepLearning.AI JAX lessons during development:
+to fetch DeepLearning.AI lessons during development:
 
 ```bash
-uv run tools/download_lessons.py
+uv run tools/download_lessons.py <COURSE_URL>
 ```
 
-It is not part of the extraction pipeline. The course URL is hardcoded, authentication must be
+It is not part of the extraction pipeline. The course URL is a required argument, authentication must be
 configured in the script from a valid browser session, downloads are written to the current
 directory, and `ffmpeg` is required. Downloaded `*.mp4` files are git-ignored.
 
