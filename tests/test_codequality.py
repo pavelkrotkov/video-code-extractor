@@ -71,6 +71,27 @@ def test_parses_as_python_false_for_broken_or_empty():
     assert not parses_as_python("   ")
 
 
+def test_parses_as_python_rejects_module_level_statements():
+    # codex: compile() (not ast.parse) catches statements that parse but are invalid at module
+    # level — the fingerprint of OCR dropping an enclosing block / its indentation.
+    assert not parses_as_python("return 1")
+    assert not parses_as_python("break")
+    assert parses_as_python("def f():\n    return 1")  # valid in context
+
+
+def test_is_suspect_flags_dedented_return():
+    # A leaked top-level return in an otherwise Python-detected snippet is now flagged.
+    assert is_suspect("x = 1\nreturn x")
+
+
+def test_bare_array_repr_without_prompt_is_treated_as_output():
+    # codex: a rendered repr captured without its Out[n]: prompt still parses, but it is output,
+    # not source — so it is both suspect and stripped from the cleaned code.
+    raw = "x = compute()\narray([0., 0., 0., 0., 0.])"
+    assert is_suspect(raw)
+    assert clean_transcription(raw) == "x = compute()"
+
+
 # --- notebook chrome / rendered output ----------------------------------------------------
 
 
@@ -166,8 +187,16 @@ def test_reconcile_cluster_strips_chrome_from_winner():
 
 
 def test_reconcile_prefers_confidence_over_length_for_non_python():
-    # codex: for non-Python clusters (valid==0 for all), a higher-confidence clean read must beat a
-    # lower-confidence variant that merely has an extra noise line.
+    # codex (round 1): for non-Python clusters (valid==0 for all), a higher-confidence clean read
+    # must beat a lower-confidence variant that merely has an extra noise line.
     clean = _ext("const x = 5;", ms=0, confidence=0.95)
     noisy = _ext("const x = 5;\n|", ms=1000, confidence=0.80)  # extra cursor line, longer
     assert reconcile_cluster([noisy, clean]) == "const x = 5;"
+
+
+def test_reconcile_prefers_completeness_among_valid_variants():
+    # codex (round 2): among variants that all compile, the most complete one wins even at lower
+    # confidence, so a fuller cell is not dropped for a shorter higher-confidence capture.
+    full = _ext("import os\nimport sys\nx = 1", ms=0, confidence=0.80)
+    short = _ext("import os\nx = 1", ms=1000, confidence=0.95)
+    assert reconcile_cluster([short, full]) == "import os\nimport sys\nx = 1"

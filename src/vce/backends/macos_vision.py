@@ -14,6 +14,7 @@ flip it implies) lives in :func:`_vision_bbox_to_pixels`.
 
 from __future__ import annotations
 
+import math
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -110,7 +111,9 @@ def _parse_annotation(entry: object, width: int, height: int) -> tuple[BBox, str
         return None
     coords: list[float] = []
     for value in bbox_obj:
-        if not isinstance(value, int | float):
+        # Reject non-finite coords (NaN/inf): they pass the float check but would raise in
+        # round() during conversion, aborting the whole frame instead of skipping one bad box.
+        if not isinstance(value, int | float) or not math.isfinite(value):
             return None
         coords.append(float(value))
     try:

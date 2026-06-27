@@ -241,6 +241,7 @@ def test_captures_differing_only_in_rendered_output_merge_to_one(tmp_path, synth
     result = pipeline.run(Path("lesson.mp4"))
 
     assert result.num_snippets == 1  # one cell, not duplicated by its differing output
+    assert result.num_flagged == 0  # the output-only difference is not flagged as a conflict
     assert result.script_path.read_text() == "x = compute()\n"
     # All three frames are still cited in provenance with their raw OCR intact.
     provenance = json.loads(result.provenance_path.read_text())

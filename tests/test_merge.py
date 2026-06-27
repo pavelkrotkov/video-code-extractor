@@ -95,6 +95,20 @@ def test_whitespace_and_cursor_noise_do_not_split_a_group():
 # --- conflict / low-confidence flagging ---------------------------------------------------
 
 
+def test_cluster_text_suppresses_output_only_conflict():
+    # codex: when cluster_text groups captures by their output-stripped code, two frames whose code
+    # is identical but whose rendered Out[n]: payloads differ must NOT be flagged as a conflict.
+    from vce.codequality import clean_transcription
+
+    a = make_extraction("x = f()\nOut[1]:\narray([1, 2, 3])", ms=0, confidence=0.9)
+    b = make_extraction("x = f()\nOut[1]:\narray([9, 8, 7])", ms=1000, confidence=0.9)
+
+    merged = merge_snippets([a, b], cluster_text=clean_transcription)
+
+    assert len(merged) == 1
+    assert "conflict" not in merged[0].notes
+
+
 def test_conflicting_pair_is_flagged_in_notes():
     # Two differing transcriptions of similar shape with near-equal confidence: no clear winner.
     a = make_extraction("total = a + b", ms=0, confidence=0.88)

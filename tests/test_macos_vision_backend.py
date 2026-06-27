@@ -130,6 +130,20 @@ def test_to_extraction_skips_malformed_annotations():
     assert ext.confidence == pytest.approx((0.95 + 0.85) / 2)
 
 
+def test_to_extraction_skips_non_finite_bbox(tmp_path):
+    # A NaN/inf bbox coordinate passes the float check but would crash round(); it must be skipped
+    # like any other malformed annotation, not abort the whole frame.
+    annotations = [
+        ("good", 0.95, (0.1, 0.8, 0.2, 0.05)),
+        ("nan box", 0.9, (float("nan"), 0.6, 0.2, 0.05)),
+        ("inf box", 0.9, (0.1, float("inf"), 0.2, 0.05)),
+        ("also good", 0.85, (0.1, 0.4, 0.2, 0.05)),
+    ]
+    ext = _to_extraction(annotations, FRAME, 100, 100)
+    assert ext.text == "good\nalso good"
+    assert len(ext.bboxes) == 2
+
+
 def test_to_extraction_empty_returns_empty_extraction():
     ext = _to_extraction([], FRAME, 100, 100)
     assert ext.text == ""

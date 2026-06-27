@@ -23,7 +23,6 @@ per frame inside the pipeline and is trivially unit-testable without OCR, networ
 
 from __future__ import annotations
 
-import ast
 import re
 from collections.abc import Sequence
 
@@ -82,17 +81,22 @@ def parses_as_python(text: str) -> bool:
     """Does ``text`` compile as a Python module? Trailing/leading blank tolerant; never raises.
 
     A clean structural quality signal: OCR that mangles brackets, f-string braces, or identifiers
-    (``__init__`` → ``init``, ``max_len`` → ``max len``) almost always fails to parse, while a
-    faithful transcription of a self-contained cell parses. Returns ``False`` for empty text.
+    (``__init__`` → ``init``, ``max_len`` → ``max len``) almost always fails to compile, while a
+    faithful transcription of a self-contained cell does. Returns ``False`` for empty text.
+
+    Uses :func:`compile` (not :func:`ast.parse`) so that statements that parse but are invalid at
+    module level — a top-level ``return`` / ``break`` / ``await`` left behind when OCR drops the
+    enclosing block or its indentation — are correctly reported as invalid, honoring the
+    "compile as a Python module" contract.
     """
     stripped = text.strip("\n")
     if not stripped.strip():
         return False
     try:
-        ast.parse(stripped)
+        compile(stripped, "<ocr>", "exec")
     except (SyntaxError, ValueError, RecursionError):
-        # SyntaxError: malformed source; ValueError: e.g. embedded null bytes; RecursionError:
-        # pathologically deep nesting from OCR noise. The contract is "never raises".
+        # SyntaxError: malformed source (incl. misplaced return/break/await); ValueError: e.g.
+        # embedded null bytes; RecursionError: pathologically deep nesting. Contract: never raises.
         return False
     return True
 
@@ -127,6 +131,11 @@ def _has_prompt(text: str) -> bool:
     return any(_PROMPT.match(line) for line in text.splitlines())
 
 
+def _has_rendered_output(text: str) -> bool:
+    """Does any line look like a rendered array/numeric repr (see :func:`_is_rendered_output`)?"""
+    return any(_is_rendered_output(line) for line in text.splitlines())
+
+
 def contains_notebook_chrome(text: str) -> bool:
     """Does any line of ``text`` carry a notebook cell prompt or rendered output (see :func:`is_suspect`)?"""
     return any(_PROMPT.match(line) or _is_rendered_output(line) for line in text.splitlines())
@@ -137,11 +146,13 @@ def clean_transcription(text: str, *, language: str | None = None) -> str:
 
     Two safeguards, in order:
 
-    1. **Never corrupt valid source.** If ``text`` has no cell prompts and already parses as Python
-       it is real code, not polluted output, so it is returned untouched (only edge blank lines
-       trimmed). This is what keeps a genuine multi-line literal — rows like ``[1, 2, 3, 4],`` — from
-       being mistaken for a rendered array and silently deleted. (The prompt check matters because a
-       stray ``Out[1]: array(...)`` line can itself happen to parse as a Python annotation.)
+    1. **Never corrupt valid source.** If ``text`` has no cell prompts, carries no rendered-output
+       line, and already parses as Python, it is real code — returned untouched (only edge blank
+       lines trimmed). This is what keeps a genuine multi-line literal — rows like ``[1, 2, 3, 4],``
+       — from being mistaken for a rendered array and silently deleted. (The prompt check matters
+       because a stray ``Out[1]: array(...)`` line can itself happen to parse as a Python annotation;
+       the rendered-output check catches a bare ``array([...])`` repr captured without its prompt,
+       which also parses but is output, not source.)
     2. **Otherwise strip notebook chrome.** Jupyter cell prompts are removed whether standalone or
        inline (``In [1]: import x`` keeps ``import x``); an ``Out[n]:`` prompt opens an *output
        region* whose following lines (the rendered repr, numeric or not) are dropped until the next
@@ -152,7 +163,7 @@ def clean_transcription(text: str, *, language: str | None = None) -> str:
     original for provenance. ``language`` is accepted for forward-compatibility (per-language cleaning
     can be added without a signature change) but the current filters are language-agnostic.
     """
-    if not _has_prompt(text) and parses_as_python(text):
+    if not _has_prompt(text) and not _has_rendered_output(text) and parses_as_python(text):
         return text.strip("\n")
 
     kept: list[str] = []
@@ -193,37 +204,48 @@ def is_suspect(text: str) -> bool:
     is the validity half of the escalation decision: it keeps high-confidence-but-broken OCR eligible
     for the accuracy tier.
 
-    The branch order matters: a *valid* Python snippet that merely contains numeric literal rows
-    (``[1, 2, 3, 4],``) must not be flagged just because those rows resemble rendered output, so the
-    rendered-output check only applies once we know the text is not valid Python.
+    A valid Python snippet that merely contains comma-separated numeric literal rows
+    (``[1, 2, 3, 4],``) is not flagged: those rows parse, so :func:`_is_rendered_output` does not
+    treat them as output. But a snippet carrying a genuine rendered repr — a bare ``array([...])`` or
+    a space-separated ``[1. 2. 3.]`` captured without its ``Out[n]:`` prompt — is suspect even though
+    it may itself parse, so the rendered-output check runs regardless of validity.
     """
     if not text.strip():
         return False
-    if _has_prompt(text):
+    if _has_prompt(text) or _has_rendered_output(text):
         return True
     if detect_language(text) == "python":
         return not parses_as_python(text)
-    return any(_is_rendered_output(line) for line in text.splitlines())
+    return False
 
 
-def _variant_rank(extraction: Extraction) -> tuple[int, float, int, int, int]:
+def _variant_rank(extraction: Extraction) -> tuple[float, ...]:
     """Sort key for reconciliation: best variant first (see :func:`reconcile_cluster`).
 
-    Ascending-``max`` tuple, in priority order:
+    ``valid`` (parses as Python) is always the top priority, so a valid variant beats a broken one
+    independent of keyword-based detection — keyword-less code (``y = jnp.ones((3, 3))``) still wins
+    over a broken sibling. The remaining keys are *validity-dependent*, because the two cases want
+    opposite tie-breaks:
 
-    * **valid** — a transcription that parses as Python beats one that does not, independent of
-      keyword-based detection, so keyword-less code (``y = jnp.ones((3, 3))``) still wins over a
-      broken sibling. Non-Python clusters score ``0`` here and fall through to the next keys.
-    * **confidence** — the OCR confidence. Placed above completeness so that for non-Python (and
-      tied-validity) clusters a higher-confidence clean read is not lost to a lower-confidence
-      variant that merely has an extra cursor/noise line, matching the merge's representative choice.
-    * **completeness** — most non-blank lines, then longest, as a final content tie-break.
-    * **earliest frame** — ``-timestamp`` so the earliest capture wins under ``max``.
+    * **Valid variants** rank **completeness before confidence** (most non-blank lines, then longest,
+      then confidence). Among captures that all compile, the goal is the *most complete* one, so a
+      fuller cell is not dropped for a shorter higher-confidence capture that lost an optional tail.
+    * **Invalid / non-Python variants** rank **confidence before completeness**, so a higher-
+      confidence clean read is not lost to a lower-confidence variant that merely has an extra
+      cursor/noise line (which would also inflate its line count).
+
+    Earliest frame (``-timestamp``) is the final deterministic tie-break. Cross-class comparison only
+    ever reaches the leading ``valid`` element, so the two key layouts never compare against each
+    other beyond it.
     """
     text = extraction.text
     nonblank = sum(1 for line in text.splitlines() if line.strip())
-    valid = int(parses_as_python(text))
-    return (valid, extraction.confidence, nonblank, len(text), -extraction.frame.timestamp_ms)
+    completeness = (nonblank, len(text))
+    confidence = extraction.confidence
+    earliest = -extraction.frame.timestamp_ms
+    if parses_as_python(text):
+        return (1, *completeness, confidence, earliest)
+    return (0, confidence, *completeness, earliest)
 
 
 def reconcile_cluster(extractions: Sequence[Extraction]) -> str:
