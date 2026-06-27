@@ -115,6 +115,21 @@ def test_clean_strips_nonnumeric_output_after_out_prompt():
     assert clean_transcription(raw) == "model = Net()"
 
 
+def test_clean_preserves_comma_literal_rows_in_unparseable_snippet():
+    # gemini round 2: even when the whole snippet fails to parse, comma-separated Python list rows
+    # are valid Python and must survive the fallback cleaning (no silent data loss).
+    raw = "weights = [\n    [1, 2, 3, 4, 5, 6],\n    [7, 8, 9, 10, 11, 12],\n    broken("
+    cleaned = clean_transcription(raw)
+    assert "[1, 2, 3, 4, 5, 6]," in cleaned
+    assert "[7, 8, 9, 10, 11, 12]," in cleaned
+
+
+def test_clean_strips_space_separated_numpy_repr_in_unparseable_snippet():
+    # The complement: a printed numpy repr uses space separators, fails to parse, and is stripped.
+    raw = "x = process(\n[0.1 0.2 0.3 0.4 0.5 0.6]\nbroken("
+    assert "0.1 0.2" not in clean_transcription(raw)
+
+
 # --- suspicion ----------------------------------------------------------------------------
 
 

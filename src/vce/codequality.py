@@ -111,7 +111,11 @@ def _is_rendered_output(line: str) -> bool:
     if len(stripped) < 12 or "=" in stripped or not any(ch.isdigit() for ch in stripped):
         return False
     if _NUMERIC_LINE.match(stripped):
-        return True
+        # Distinguish a real Python list/tuple row from a rendered array even in the not-yet-parsing
+        # fallback: a comma-separated row (``[1, 2, 3, 4],``) is valid Python and is preserved, while
+        # a printed numpy/torch repr uses *space* separators (``[1. 2. 3.]``), fails to parse, and is
+        # stripped. This stops a single syntax error elsewhere from silently deleting data rows.
+        return not parses_as_python(stripped)
     if _ARRAY_REPR.match(stripped):
         body = stripped[stripped.index("(") :]
         return all(ch.isdigit() or ch in " .,+-eE[]()" for ch in body)
