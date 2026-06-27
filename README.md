@@ -44,9 +44,13 @@ cheap backend reads each kept frame — it filters non-code frames out of the me
 expensive vision tier, but does not avoid the cheap OCR pass itself.
 
 The `--backend` flag picks the primary (cheap) backend; with `macos-vision` selected, frames it reads
-with low confidence are escalated to the vision backend (`--escalate-below`, needs
-`OPENAI_API_KEY`; disable with `--no-escalate`). Intermediate frames and crops are written to
-per-video `<video>_frames` / `<video>_crops` sub-directories of `--out`.
+with low confidence **or** that are code-like but structurally suspect (don't parse, or carry
+notebook chrome / rendered output) are escalated to the vision backend (`--escalate-below`, needs
+`OPENAI_API_KEY`; disable with `--no-escalate`). Recognition confidence alone is a poor proxy for
+code correctness, so the escalation decision combines it with a language-aware validity signal.
+Running local-only (`--no-escalate`) still surfaces snippets it couldn't validate as *flagged for
+review* rather than presenting them as clean. Intermediate frames and crops are written to per-video
+`<video>_frames` / `<video>_crops` sub-directories of `--out`.
 
 > The default `macos-vision` backend uses Apple's on-device Vision OCR via
 > [`ocrmac`](https://pypi.org/project/ocrmac/), installed automatically on macOS (it is a

@@ -25,7 +25,9 @@ def test_crop_region_writes_expected_size_and_content(frame_with_red_square, tmp
     with Image.open(cropped) as img:
         assert img.size == (20, 20)
         # predominantly red — exact (255,0,0) isn't guaranteed through JPEG input
-        r, g, b = img.convert("RGB").getpixel((5, 5))
+        pixel = img.convert("RGB").getpixel((5, 5))
+        assert isinstance(pixel, tuple)
+        r, g, b = pixel
         assert r > 200 and g < 80 and b < 80
 
 

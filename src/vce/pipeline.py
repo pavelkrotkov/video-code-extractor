@@ -26,10 +26,11 @@ orchestration itself is unit-testable without touching the network or the disk-b
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from vce.backends.base import ExtractionBackend
+from vce.codequality import is_suspect, reconcile_cluster
 from vce.cropping import crop_region
 from vce.dedup import dedup_frames
 from vce.frames import extract_frames, scene_change_frames
@@ -37,6 +38,7 @@ from vce.merge import (
     DEFAULT_CONFLICT_MARGIN,
     DEFAULT_LOW_CONFIDENCE,
     DEFAULT_SIMILARITY,
+    MergeResult,
     build_provenance,
     merge_results,
     write_provenance,
@@ -100,6 +102,15 @@ class PipelineResult:
     def num_snippets(self) -> int:
         return len(self.snippets)
 
+    @property
+    def num_flagged(self) -> int:
+        """Count of snippets carrying a review note (low confidence, conflict, or unresolved).
+
+        These are the snippets the run could not confidently present as clean — surfaced by the CLI
+        so a local-only (``--no-escalate``) run identifies its low-quality output rather than
+        passing it off silently (issue #24)."""
+        return sum(1 for snippet in self.snippets if snippet.notes)
+
 
 def _artifact_base(video: Path) -> str:
     """Filename stem shared by all of a run's artifacts (script, sidecar, and frame/crop dirs).
@@ -140,6 +151,24 @@ def _build_script(snippets: list[MergedSnippet]) -> str:
     return "\n\n\n".join(parts) + "\n"
 
 
+def _flag_unresolved(result: MergeResult) -> MergeResult:
+    """Append a review note to a snippet whose reconciled code still fails validation.
+
+    After reconciliation and cleaning, a snippet whose code is still code-like-but-invalid (e.g. an
+    OCR-mangled cell that no escalation tier resolved) is flagged rather than presented as clean.
+    The note rides on :attr:`~vce.types.MergedSnippet.notes` (alongside merge's existing
+    low-confidence / conflict notes) and is surfaced by the CLI; the cleaned code and provenance
+    schema are untouched. A clean, valid snippet is returned unchanged.
+    """
+    code = result.snippet.code
+    if not is_suspect(code):
+        return result
+    note = "unresolved: code-like text did not validate; re-run with vision escalation to repair"
+    existing = result.snippet.notes
+    snippet = replace(result.snippet, notes=f"{existing}; {note}" if existing else note)
+    return replace(result, snippet=snippet)
+
+
 class Pipeline:
     """Runs the full extract→merge pipeline for a single video.
 
@@ -165,8 +194,19 @@ class Pipeline:
             return frame.path
         return crop_region(frame, self._config.crop, crops_dir)
 
+    def _should_escalate(self, extraction: Extraction) -> bool:
+        """Escalate when the primary read is low-confidence *or* code-like but structurally suspect.
+
+        Vision's recognition confidence alone misses high-confidence-but-broken OCR — mangled
+        brackets, notebook output bleeding into code — so we OR it with an independent code-validity
+        signal (:func:`vce.codequality.is_suspect`). A transcription that passed the code-likeness
+        gate but does not parse, or carries notebook chrome / rendered output, is therefore eligible
+        for the accuracy tier even at confidence 1.0 (issue #24).
+        """
+        return extraction.confidence < self._config.escalate_below or is_suspect(extraction.text)
+
     def _extract_kept(self, frame: Frame, image: Path) -> Extraction | None:
-        """Cheap-extract, gate on code-likeness, then escalate if the cheap read was unsure.
+        """Cheap-extract, gate on code-likeness, then escalate if the cheap read was unsure or suspect.
 
         Returns ``None`` for a frame that fails the code-likeness gate (so it is dropped before any
         expensive escalation). Otherwise returns the extraction to merge — the escalation backend's
@@ -175,7 +215,7 @@ class Pipeline:
         extraction = self._primary.extract(image, frame)
         if score_code_likeness(frame, extraction.text).score < self._config.score_threshold:
             return None
-        if self._escalation is not None and extraction.confidence < self._config.escalate_below:
+        if self._escalation is not None and self._should_escalate(extraction):
             escalated = self._escalation.extract(image, frame)
             # Only adopt the escalation if it *also* reads as code. Vision is the accuracy tier, so
             # a code-like result is preferred — but an empty or off-target response must not discard
@@ -211,12 +251,16 @@ class Pipeline:
             if extraction is not None:
                 extractions.append(extraction)
 
+        # Reconcile overlapping captures of one cell into the most complete valid variant, cleaned
+        # of notebook chrome / rendered output, via the merge step's reconciliation seam.
         results = merge_results(
             extractions,
             similarity_threshold=config.similarity_threshold,
             low_confidence_threshold=config.low_confidence_threshold,
             conflict_margin=config.conflict_margin,
+            merge_fn=reconcile_cluster,
         )
+        results = [_flag_unresolved(r) for r in results]
         snippets = [r.snippet for r in results]
 
         script_path = config.out_dir / f"{base}.py"

@@ -137,6 +137,23 @@ def test_to_extraction_empty_returns_empty_extraction():
     assert ext.bboxes == ()
 
 
+def test_to_extraction_reconstructs_indentation_from_box_geometry():
+    # Four lines of a nested Python block. Left edges step right with nesting (px: 10, 18, 26) and
+    # dedent back (return 2 shares the if's column at 18). Each fragment is ~2px/char wide, so the
+    # 8px steps are several char-widths apart and resolve to distinct four-space indent levels.
+    # Boxes are in normalized, bottom-left-origin coords; higher lines have the larger y.
+    annotations = [
+        ("def f():", 0.95, (0.10, 0.85, 0.16, 0.04)),  # col 0
+        ("if x:", 0.95, (0.18, 0.78, 0.10, 0.04)),  # col 1 (nested)
+        ("return 1", 0.95, (0.26, 0.71, 0.16, 0.04)),  # col 2 (nested deeper)
+        ("return 2", 0.95, (0.18, 0.64, 0.16, 0.04)),  # back to col 1 (dedent)
+    ]
+    ext = _to_extraction(annotations, FRAME, 100, 100)
+    assert ext.text == "def f():\n    if x:\n        return 1\n    return 2"
+    # The reconstructed indentation must yield syntactically valid Python.
+    compile(ext.text, "<ocr>", "exec")
+
+
 # --- backend wiring -----------------------------------------------------------------------
 
 

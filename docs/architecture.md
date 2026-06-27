@@ -18,8 +18,8 @@ That is the robust version of what you described.
 | --------------------------------- | -----------------------------------------------------------------------------------------: | ------------------------------: | --------------------------------------------------------------------- |
 | **Apple Vision (`ocrmac`)**       |    Native macOS on-device OCR (`VNRecognizeTextRequest`); text, confidence, and bounding boxes |                             Yes | The local OCR base this project uses on macOS                          |
 | **PySceneDetect**                 |                                           Detects cuts / scene changes and can save images |                          Partly | Useful frame reducer, not enough by itself                            |
-| **timminator/VideOCR**            |                  GUI/CLI for extracting burned-in subtitles using PaddleOCR or Google Lens |                           Maybe | Useful if code appears in a stable crop region, but subtitle-oriented |
-| **knakamura13/videocr-PaddleOCR** |                                          Hardcoded subtitle extractor with crop parameters |                           Maybe | Good model for “OCR region of video,” not code-specific               |
+| **timminator/VideOCR**            |              GUI/CLI for extracting burned-in subtitles using local OCR or Google Lens |                           Maybe | Useful if code appears in a stable crop region, but subtitle-oriented |
+| **Hardcoded-subtitle OCR extractors** |                            Subtitle extractors that OCR a fixed crop region of the video |                           Maybe | Good model for “OCR region of video,” not code-specific               |
 | **CaptiOCR**                      |                         Real-time screen-region OCR with Tesseract and duplicate filtering |                           Maybe | Nice for interactive/manual capture while playing videos              |
 | **PSC2CODE**                      |                        Research prototype for extracting code from programming screencasts |                Yes conceptually | Closest code-specific repo, but old/researchy                         |
 | **Codemotion**                    |  Research prototype for extracting code and dynamic edits from programming tutorial videos |                Yes conceptually | Interesting but explicitly not well documented                        |
@@ -51,9 +51,9 @@ FFmpeg also has scene-change filters; its documentation describes `scdet` as det
 
 ### 4. Video OCR tools: good starting points, subtitle-biased
 
-**timminator/VideOCR** extracts burned-in subtitles from videos using PaddleOCR locally or Google Lens in a hybrid mode, and it has both GUI and command-line usage. ([GitHub][6])
+**timminator/VideOCR** extracts burned-in subtitles from videos using a local OCR engine or Google Lens in a hybrid mode, and it has both GUI and command-line usage. ([GitHub][6])
 
-**knakamura13/videocr-PaddleOCR** is also subtitle-oriented, but its README has the exact trick you probably need: it supports crop parameters so OCR is run only on the relevant part of the video, which speeds up processing and improves accuracy. ([GitHub][7])
+Other hardcoded-subtitle OCR extractors are also subtitle-oriented, but share the exact trick you probably need: they support crop parameters so OCR is run only on the relevant part of the video, which speeds up processing and improves accuracy.
 
 **CaptiOCR** is interesting if you want a semi-manual workflow: you select a rectangular screen region, it repeatedly screenshots that region, runs Tesseract locally, and uses duplicate/novelty filtering to stitch text over time. Its README explicitly mentions ROVER plus TF-IDF novelty scoring to filter duplicates while preserving new content. ([GitHub][8])
 
@@ -164,9 +164,15 @@ If the layout changes, use OCR bounding boxes and merge text-dense rectangles. I
 
 For each candidate crop, run:
 
-1. **Apple Vision OCR** (`ocrmac`) locally for cheap extraction on macOS.
-2. **Vision LLM** only for frames with poor OCR, low confidence, tiny text, or snippets you actually care about.
-3. Preserve timestamp + screenshot filename + raw OCR.
+1. **Apple Vision OCR** (`ocrmac`) locally for cheap extraction on macOS. Leading indentation is
+   reconstructed from the recognized boxes' left-edge geometry, so nested blocks keep their
+   structure instead of being flattened to column zero.
+2. **Vision LLM** only for frames with poor OCR, low confidence, or — crucially — a code-like local
+   transcription that is *structurally suspect*. Apple Vision's recognition confidence says how sure
+   it is it read the glyphs, not whether the result is valid code, so the escalation decision ORs
+   confidence with a language-aware validity signal (`vce.codequality`): high-confidence OCR that
+   does not parse, or that carries notebook chrome / rendered output, is still escalated.
+3. Preserve timestamp + screenshot filename + **raw** OCR (before any cleaning) for provenance.
 
 Prompt the vision LLM like this:
 
@@ -185,7 +191,10 @@ This is where most crude OCR projects fail. You need to merge repeated, partiall
 
 Use one of these strategies:
 
-**For static snippets:** group near-identical OCR outputs by edit distance, keep the best/highest-confidence version.
+**For static snippets:** group near-identical OCR outputs by edit distance, then reconcile each
+group to the most *complete valid* variant — preferring a transcription that parses over a
+higher-confidence one that does not — cleaned of notebook chrome and rendered output. Overlapping
+captures of one cell collapse to a single block rather than being concatenated as duplicates.
 
 **For live coding:** treat every frame as a possible version of a file and run diffs over time.
 
@@ -281,7 +290,6 @@ For occasional flashed snippets, this should work very well. For continuous live
 [4]: https://github.com/breakthrough/pyscenedetect "GitHub - Breakthrough/PySceneDetect: :movie_camera: Python and OpenCV-based scene cut/transition detection program & library. · GitHub"
 [5]: https://ffmpeg.org/ffmpeg-filters.html?utm_source=chatgpt.com "FFmpeg Filters Documentation"
 [6]: https://github.com/timminator/VideOCR "GitHub - timminator/VideOCR: Extract hardcoded subtitles from videos via a simple GUI using machine learning. Supports 200+ languages. · GitHub"
-[7]: https://github.com/knakamura13/videocr-PaddleOCR "GitHub - knakamura13/videocr-PaddleOCR: Extract hardcoded subtitles from videos using machine learning · GitHub"
 [8]: https://github.com/carlosacchi/captiocr "GitHub - carlosacchi/captiocr: CaptiOCR - A real-time screen text extraction tool using Tesseract OCR. Capture, recognize, and log on-screen text dynamically. Future updates will include on-demand language installation, resizable selection areas, and live text overlays. · GitHub"
 [9]: https://github.com/baolingfeng/PSC2CODE "GitHub - baolingfeng/PSC2CODE · GitHub"
 [10]: https://soarsmu.github.io/papers/2020/Bao2020psc2code.pdf "TOSEM2903-21"

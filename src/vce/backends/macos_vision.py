@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from statistics import fmean
+from statistics import fmean, median
 
 from vce.types import BBox, Extraction, Frame
 
@@ -87,30 +87,110 @@ def _group_lines(items: list[tuple[BBox, str, float]]) -> list[list[tuple[BBox, 
     return lines
 
 
+def _parse_annotation(entry: object, width: int, height: int) -> tuple[BBox, str, float] | None:
+    """Convert one raw Vision annotation to ``(pixel BBox, text, confidence)``; ``None`` if malformed.
+
+    Vision (via ``ocrmac``) yields well-formed :data:`Annotation` tuples, but engine/version drift
+    can produce the odd wrong-arity entry, non-numeric confidence, or short bounding box. Rather than
+    trust the happy-path type, this validates structurally and returns ``None`` for anything it can't
+    honestly read, so one bad annotation is skipped instead of crashing the whole frame. (This is why
+    :func:`_to_extraction` accepts ``Sequence[object]``: tolerating malformed input is part of the
+    contract, so the parameter is typed as honestly as the body actually treats it.)
+    """
+    if not isinstance(entry, Sequence) or isinstance(entry, str | bytes) or len(entry) != 3:
+        return None
+    text_obj, conf_obj, bbox_obj = entry[0], entry[1], entry[2]
+    if not isinstance(conf_obj, int | float | str):
+        return None
+    if (
+        not isinstance(bbox_obj, Sequence)
+        or isinstance(bbox_obj, str | bytes)
+        or len(bbox_obj) != 4
+    ):
+        return None
+    coords: list[float] = []
+    for value in bbox_obj:
+        if not isinstance(value, int | float):
+            return None
+        coords.append(float(value))
+    try:
+        confidence = float(conf_obj)
+    except ValueError:
+        return None
+    return (_vision_bbox_to_pixels(coords, width, height), str(text_obj), confidence)
+
+
+def _estimate_char_width(items: Sequence[tuple[BBox, str, float]]) -> float:
+    """Estimate the pixel width of one monospace character from the recognized boxes.
+
+    The median of ``box.width / len(text)`` over non-empty fragments (robust to the odd very short or
+    very wide box), falling back to a fraction of the median box height, then to ``1.0``. This sets
+    the tolerance for snapping line-start x-positions into indentation columns.
+    """
+    widths = [bbox.width / len(text) for bbox, text, _ in items if text]
+    if widths:
+        return median(widths)
+    heights = [bbox.height for bbox, _, _ in items if bbox.height > 0]
+    if heights:
+        return max(median(heights) * 0.6, 1.0)
+    return 1.0
+
+
+def _indent_prefixes(
+    lines: Sequence[Sequence[tuple[BBox, str, float]]], char_width: float
+) -> list[str]:
+    """Reconstruct each visual line's leading indentation from box geometry.
+
+    Each line's leftmost x-edge is snapped to an indentation *column*: distinct left edges more than
+    ~one character width apart seed new columns, and each column is rendered as a consistent
+    four-space level ranked left-to-right. This turns Vision's pixel offsets back into nested Python
+    indentation (deeper code → larger x → deeper level) and normalises whatever step size or
+    tab/space mix the source used to clean, parseable four-space levels — while lines sharing a
+    column (a block body and the later line that dedents back to it) collapse to the same level.
+
+    Lines all sharing one column (the common single-column case the existing tests exercise) get an
+    empty prefix, so flat snippets are unchanged.
+    """
+    if not lines:
+        return []
+    lefts = [min(it[0].x for it in line) for line in lines]
+    tol = max(char_width, 1.0)
+    columns: list[int] = []
+    for x in sorted(set(lefts)):
+        if not columns or x - columns[-1] > tol:
+            columns.append(x)
+    # Snap each line to its nearest column (ties -> leftmost) so a left edge near a column boundary
+    # can't drift to the wrong level.
+    return ["    " * min(range(len(columns)), key=lambda i: abs(x - columns[i])) for x in lefts]
+
+
 def _to_extraction(
-    annotations: Sequence[Annotation], frame: Frame, width: int, height: int
+    annotations: Sequence[object], frame: Frame, width: int, height: int
 ) -> Extraction:
     """Map Vision annotations for one image to an :class:`Extraction` in reading order.
 
-    Each box is converted to pixel space, then grouped into visual lines (top-to-bottom, fragments
-    within a line left-to-right; see :func:`_group_lines`) so the result reads in deterministic
-    source order regardless of the annotation order Vision happened to return. Empty input yields an
-    empty extraction with ``confidence == 0.0``. Confidence is the mean of the Vision confidences.
+    Each box is converted to pixel space, grouped into visual lines (top-to-bottom, fragments within
+    a line left-to-right; see :func:`_group_lines`), and given a leading indent reconstructed from
+    its left-edge geometry (:func:`_indent_prefixes`) so nested blocks keep their structure instead
+    of being flattened to column zero. The result therefore reads in deterministic source order
+    regardless of the order Vision returned the annotations. Empty input yields an empty extraction
+    with ``confidence == 0.0``; confidence is the mean of the Vision confidences.
 
-    A single malformed annotation (wrong arity, a non-4 bounding box, a non-numeric confidence) is
-    skipped rather than crashing the whole frame, mirroring how the old PaddleOCR backend tolerated
-    its engine's version-to-version result shifts.
+    Entries are accepted as ``Sequence[object]`` and validated per-annotation by
+    :func:`_parse_annotation`: a single malformed annotation (wrong arity, a non-4 bounding box, a
+    non-numeric confidence) is skipped rather than crashing the whole frame.
     """
     converted: list[tuple[BBox, str, float]] = []
     for entry in annotations:
-        try:
-            text, conf, norm_bbox = entry
-            item = (_vision_bbox_to_pixels(norm_bbox, width, height), str(text), float(conf))
-        except (ValueError, TypeError, IndexError):
-            continue  # skip a malformed annotation, keep the rest of the frame
-        converted.append(item)
+        parsed = _parse_annotation(entry, width, height)
+        if parsed is not None:
+            converted.append(parsed)
     lines = _group_lines(converted)
-    texts = [" ".join(it[1] for it in line) for line in lines]
+    prefixes = _indent_prefixes(lines, _estimate_char_width(converted))
+    texts = [
+        prefix + " ".join(it[1] for it in line)
+        for prefix, line in zip(prefixes, lines, strict=True)
+    ]
     confs = [it[2] for it in converted]
     bboxes = tuple(it[0] for line in lines for it in line)
     return Extraction(
