@@ -155,7 +155,7 @@ class MacOSVisionBackend:
                 "--backend vision-gpt4v (needs OPENAI_API_KEY)"
             )
         try:
-            from ocrmac import ocrmac  # ty: ignore[unresolved-import]
+            from ocrmac import ocrmac
         except ImportError as exc:  # pragma: no cover - exercised via monkeypatched import
             raise ImportError(
                 "ocrmac is required for the macos-vision backend on macOS: pip install ocrmac"
