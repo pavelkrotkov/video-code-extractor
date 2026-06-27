@@ -9,7 +9,7 @@ import argparse
 import re
 import subprocess
 import sys
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -44,7 +44,7 @@ def main():
     lesson_links = []
     for a in soup.find_all("a", href=True):
         if "/lesson/" in a["href"]:
-            full_url = requests.compat.urljoin(course_url, a["href"])
+            full_url = urljoin(course_url, a["href"])
             lesson_links.append(full_url)
 
     # Deduplicate while preserving the order the lessons appear on the course page.
@@ -121,6 +121,12 @@ def main():
                 "Error: 'ffmpeg' is not installed or not found in your PATH. "
                 "Please install ffmpeg to download lessons."
             )
+        except subprocess.CalledProcessError as e:
+            print(
+                f"Error: ffmpeg failed to download {out} (exit code {e.returncode}). Skipping...",
+                file=sys.stderr,
+            )
+            continue
 
 
 if __name__ == "__main__":
