@@ -121,13 +121,13 @@ for tests, experiments, and custom pipelines:
 
 | Stage | Public API |
 | --- | --- |
-| Frame sampling and scene cuts | `vce.frames.extract_frames`, `scene_change_frames` |
+| Frame sampling and scene cuts | `vce.frames.extract_frames`, `vce.frames.scene_change_frames` |
 | Perceptual deduplication | `vce.dedup.dedup_frames` |
 | Fixed-region cropping | `vce.cropping.crop_region` |
 | Local OCR | `vce.backends.macos_vision.MacOSVisionBackend` |
 | Remote extraction | `vce.backends.vision.VisionLLMBackend` |
 | Code-likeness scoring | `vce.scoring.score_code_likeness` |
-| Snippet merging and provenance | `vce.merge.merge_results`, `build_provenance`, `write_provenance` |
+| Snippet merging and provenance | `vce.merge.merge_results`, `vce.merge.build_provenance`, `vce.merge.write_provenance` |
 | End-to-end orchestration | `vce.pipeline.Pipeline`, `PipelineConfig` |
 
 For example, this runs only frame collection and deduplication:
