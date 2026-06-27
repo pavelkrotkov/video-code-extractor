@@ -9,15 +9,9 @@ dependencies = [
     "numpy>=1.26",
     "openai>=1.40",
     "pillow>=10.0",
-]
-
-[project.optional-dependencies]
-# PaddleOCR is heavy; keep it out of the base install and CI.
-# Pinned to 2.x: 3.x dropped the show_log arg and the ocr(cls=...) call signature this
-# backend is written against (the nested polygon/(text, conf) result format also changed).
-paddle = [
-    "paddlepaddle>=2.6,<3.0",
-    "paddleocr>=2.7,<3.0",
+    # Apple Vision OCR (the default local backend) is macOS-only; the Darwin marker keeps it out
+    # of Linux/Windows installs and CI while making it part of a normal macOS install.
+    "ocrmac>=1.0; sys_platform == 'darwin'",
 ]
 
 [project.scripts]
@@ -42,7 +36,7 @@ ignore = ["E501", "RUF001", "RUF002", "RUF003"]
 [tool.pytest.ini_options]
 addopts = ["--strict-markers", "--strict-config"]
 markers = [
-    "paddle: tests that require the optional paddle extra (deselect with -m 'not paddle')",
+    "macos: tests that require macOS and Apple Vision (deselect with -m 'not macos')",
     "slow: slow tests (deselect with -m 'not slow')",
 ]
 

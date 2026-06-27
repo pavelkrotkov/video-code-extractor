@@ -5,12 +5,20 @@ CLI constructs so we can assert on what the CLI does with arguments and exceptio
 any real stage.
 """
 
+import sys
+
 import pytest
 
 import vce
 from vce import cli
 from vce.frames import FFmpegNotFoundError
 from vce.types import BBox
+
+
+@pytest.fixture
+def on_macos(monkeypatch):
+    """Pretend we're on macOS so the default macos-vision backend resolves without a real Mac."""
+    monkeypatch.setattr(sys, "platform", "darwin")
 
 
 class _FakeResult:
@@ -62,7 +70,7 @@ def test_extract_defaults():
     assert args.command == "extract"
     assert str(args.video) == "video.mp4"
     assert args.fps == 1.0
-    assert args.backend == cli.PADDLE
+    assert args.backend == cli.MACOS_VISION
     assert str(args.out) == "."
     assert args.score_threshold == 0.4
     assert args.crop is None
@@ -85,17 +93,17 @@ def test_crop_rejects_bad_values(bad):
 # --- backend wiring -----------------------------------------------------------------------
 
 
-def test_paddle_primary_with_key_enables_escalation(monkeypatch, capsys):
+def test_macos_vision_primary_with_key_enables_escalation(monkeypatch, capsys, on_macos):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     captured = _install_fake_pipeline(monkeypatch)
 
     assert cli.main(["extract", "v.mp4"]) == 0
-    assert captured["primary"].name == cli.PADDLE
+    assert captured["primary"].name == cli.MACOS_VISION
     assert captured["escalation"] is not None
     assert captured["escalation"].name == cli.VISION
 
 
-def test_paddle_primary_without_key_disables_escalation(monkeypatch, capsys):
+def test_macos_vision_primary_without_key_disables_escalation(monkeypatch, capsys, on_macos):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     captured = _install_fake_pipeline(monkeypatch)
 
@@ -104,7 +112,20 @@ def test_paddle_primary_without_key_disables_escalation(monkeypatch, capsys):
     assert "escalation disabled" in capsys.readouterr().err
 
 
-def test_no_escalate_flag(monkeypatch, capsys):
+def test_non_macos_default_backend_is_clean_error(monkeypatch, capsys):
+    # The local backend is macOS-only; off-Mac the CLI must point at vision-gpt4v, not crash.
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _install_fake_pipeline(monkeypatch)
+
+    assert cli.main(["extract", "v.mp4"]) == 1
+    err = capsys.readouterr().err
+    assert "vce: error:" in err
+    assert "requires macOS" in err
+    assert "vision-gpt4v" in err
+
+
+def test_no_escalate_flag(monkeypatch, capsys, on_macos):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     captured = _install_fake_pipeline(monkeypatch)
 
@@ -121,7 +142,7 @@ def test_vision_primary_without_key_is_error(monkeypatch, capsys):
     assert "needs an OpenAI API key" in capsys.readouterr().err
 
 
-def test_config_threaded_from_args(monkeypatch):
+def test_config_threaded_from_args(monkeypatch, on_macos):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     captured = _install_fake_pipeline(monkeypatch)
 
@@ -135,7 +156,7 @@ def test_config_threaded_from_args(monkeypatch):
 # --- error translation --------------------------------------------------------------------
 
 
-def test_missing_ffmpeg_is_clean_error(monkeypatch, capsys):
+def test_missing_ffmpeg_is_clean_error(monkeypatch, capsys, on_macos):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def boom():
@@ -149,7 +170,7 @@ def test_missing_ffmpeg_is_clean_error(monkeypatch, capsys):
     assert "ffmpeg not found" in err
 
 
-def test_missing_video_is_clean_error(monkeypatch, capsys):
+def test_missing_video_is_clean_error(monkeypatch, capsys, on_macos):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def boom():
@@ -161,7 +182,7 @@ def test_missing_video_is_clean_error(monkeypatch, capsys):
     assert "video not found" in capsys.readouterr().err
 
 
-def test_bad_threshold_is_clean_error(monkeypatch, capsys):
+def test_bad_threshold_is_clean_error(monkeypatch, capsys, on_macos):
     # Config validation fails before any stage runs, so this needs no fake pipeline / ffmpeg.
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert cli.main(["extract", "v.mp4", "--score-threshold", "5"]) == 1
@@ -170,7 +191,7 @@ def test_bad_threshold_is_clean_error(monkeypatch, capsys):
     assert "score_threshold must be within" in err
 
 
-def test_io_error_is_clean_error(monkeypatch, capsys):
+def test_io_error_is_clean_error(monkeypatch, capsys, on_macos):
     # A non-FileNotFound OSError (e.g. PermissionError writing outputs) gets the I/O error path.
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
@@ -185,13 +206,15 @@ def test_io_error_is_clean_error(monkeypatch, capsys):
     assert "I/O error" in err
 
 
-def test_missing_paddle_extra_is_clean_error(monkeypatch, capsys):
+def test_missing_ocrmac_dependency_is_clean_error(monkeypatch, capsys, on_macos):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def boom():
-        raise ImportError("PaddleOCR is not installed. Install the optional extra: ...")
+        raise ImportError(
+            "ocrmac is required for the macos-vision backend on macOS: pip install ocrmac"
+        )
 
     _install_fake_pipeline(monkeypatch, run=boom)
 
     assert cli.main(["extract", "v.mp4"]) == 1
-    assert "PaddleOCR is not installed" in capsys.readouterr().err
+    assert "ocrmac is required" in capsys.readouterr().err

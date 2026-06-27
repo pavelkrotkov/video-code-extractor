@@ -1,4 +1,4 @@
-"""Pluggable code-extraction backends (PaddleOCR, Vision-LLM, ...)."""
+"""Pluggable code-extraction backends (Apple Vision, Vision-LLM, ...)."""
 
 from vce.backends.base import ExtractionBackend
 

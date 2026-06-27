@@ -19,7 +19,7 @@ flowchart LR
     F --> D[2. dedup<br/>perceptual hash]
     D --> S[3. code-likeness<br/>scoring gate]
     S --> C[4. crop code region]
-    C --> X[5. extract<br/>PaddleOCR / GPT-4V]
+    C --> X[5. extract<br/>Apple Vision / GPT-4V]
     X --> M[6. merge across frames<br/>+ provenance]
     M --> O[clean .py + .provenance.json]
 ```
@@ -43,26 +43,29 @@ code-likeness gate scores a frame *from its transcription*, so it necessarily ru
 cheap backend reads each kept frame — it filters non-code frames out of the merge and the
 expensive vision tier, but does not avoid the cheap OCR pass itself.
 
-The `--backend` flag picks the primary (cheap) backend; with `paddleocr` selected, frames it reads
+The `--backend` flag picks the primary (cheap) backend; with `macos-vision` selected, frames it reads
 with low confidence are escalated to the vision backend (`--escalate-below`, needs
 `OPENAI_API_KEY`; disable with `--no-escalate`). Intermediate frames and crops are written to
 per-video `<video>_frames` / `<video>_crops` sub-directories of `--out`.
 
-> The default `paddleocr` backend lives in the optional `paddle` extra, so a bare install must
-> first run `uv sync --extra paddle` (or `pip install 'video-code-extractor[paddle]'`).
-> Alternatively, run fully on the vision backend with `--backend vision-gpt4v` and `OPENAI_API_KEY`
-> set — no extra required.
+> The default `macos-vision` backend uses Apple's on-device Vision OCR via
+> [`ocrmac`](https://pypi.org/project/ocrmac/), installed automatically on macOS (it is a
+> Darwin-only dependency). It is the cheap local tier and the default on macOS. On non-macOS hosts
+> there is no local backend — run fully on the remote vision backend with `--backend vision-gpt4v`
+> and `OPENAI_API_KEY` set.
 
 ## Develop
 
 ```bash
 uv sync --dev              # install deps + dev tools
-uv run pytest -m "not paddle"
+uv run pytest -m "not macos"
 uv run ruff check .
 uv run ruff format --check .
 ```
 
-PaddleOCR is an optional, heavy extra: `uv sync --extra paddle` and run `pytest -m paddle`.
+The `macos`-marked tests exercise real Apple Vision OCR and only run on macOS (`uv run pytest -m
+macos`); everywhere else they skip cleanly and the rest of the suite runs against injected OCR
+annotations.
 
 ## Downloading the source course (separate tool)
 

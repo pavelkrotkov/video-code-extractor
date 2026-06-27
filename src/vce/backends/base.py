@@ -17,7 +17,7 @@ from vce.types import Extraction, Frame
 class ExtractionBackend(Protocol):
     """Recover text from a single code-region image."""
 
-    #: Stable identifier used in provenance and benchmark output, e.g. ``"paddleocr"``.
+    #: Stable identifier used in provenance and benchmark output, e.g. ``"macos-vision"``.
     name: str
 
     def extract(self, image_path: Path, frame: Frame) -> Extraction:

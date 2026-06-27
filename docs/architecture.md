@@ -6,7 +6,7 @@ My practical recommendation:
 
 ## Best answer in one sentence
 
-For your use case — lessons where code flashes occasionally — I would build or use a small script that samples frames at 1–2 fps plus scene-change frames, deduplicates near-identical images, runs PaddleOCR or a vision LLM on candidate frames, scores the text for “code-likeness,” saves timestamped screenshots, and asks an LLM to merge the surviving snippets into a clean script with screenshot/time provenance.
+For your use case — lessons where code flashes occasionally — I would build or use a small script that samples frames at 1–2 fps plus scene-change frames, deduplicates near-identical images, runs a local OCR engine (Apple Vision on macOS) or a vision LLM on candidate frames, scores the text for “code-likeness,” saves timestamped screenshots, and asks an LLM to merge the surviving snippets into a clean script with screenshot/time provenance.
 
 That is the robust version of what you described.
 
@@ -16,7 +16,7 @@ That is the robust version of what you described.
 
 | Option                            |                                                                               What it does |             Good for your case? | My judgment                                                           |
 | --------------------------------- | -----------------------------------------------------------------------------------------: | ------------------------------: | --------------------------------------------------------------------- |
-| **PaddleOCR**                     | General OCR toolkit for images/PDFs, local, open source, strong text detection/recognition |                             Yes | Best local OCR engine to start with                                   |
+| **Apple Vision (`ocrmac`)**       |    Native macOS on-device OCR (`VNRecognizeTextRequest`); text, confidence, and bounding boxes |                             Yes | The local OCR base this project uses on macOS                          |
 | **PySceneDetect**                 |                                           Detects cuts / scene changes and can save images |                          Partly | Useful frame reducer, not enough by itself                            |
 | **timminator/VideOCR**            |                  GUI/CLI for extracting burned-in subtitles using PaddleOCR or Google Lens |                           Maybe | Useful if code appears in a stable crop region, but subtitle-oriented |
 | **knakamura13/videocr-PaddleOCR** |                                          Hardcoded subtitle extractor with crop parameters |                           Maybe | Good model for “OCR region of video,” not code-specific               |
@@ -25,9 +25,11 @@ That is the robust version of what you described.
 | **Codemotion**                    |  Research prototype for extracting code and dynamic edits from programming tutorial videos |                Yes conceptually | Interesting but explicitly not well documented                        |
 | **CodeSCAN**                      |     Newer dataset/benchmark for coding screencast analysis, especially VS Code screenshots | Useful for building classifiers | Not a turnkey extractor                                               |
 
-### 1. PaddleOCR: best local OCR base
+### 1. Apple Vision: the local OCR base
 
-PaddleOCR is the strongest obvious local OCR base layer: the project describes itself as a lightweight OCR/document parsing toolkit and says it supports 100+ languages. For code screenshots, its detector is often more useful than raw Tesseract because you need bounding boxes, not just a text blob. ([GitHub][1])
+This project uses Apple's native Vision OCR (`VNRecognizeTextRequest`, reached through the [`ocrmac`](https://pypi.org/project/ocrmac/) Python wrapper) as its local, cheap OCR tier on macOS. Vision runs fully on-device, ships with the OS, and exposes recognized text, per-line confidence, and bounding boxes — everything the pipeline needs to crop, score, and place snippets. Like a strong detector, it gives boxes rather than just a text blob, which matters for code screenshots.
+
+An earlier iteration used a heavyweight cross-platform OCR toolkit, but on Apple Silicon its first detection inference crashed the process with `SIGSEGV`, so it was dropped in favor of the native engine. On non-macOS hosts there is no bundled local backend; run on the remote `vision-gpt4v` tier instead.
 
 Tesseract is still fine for simple high-resolution frames, but it is more fragile on low-resolution video, antialiased fonts, syntax highlighting, dark themes, and tiny punctuation. Tesseract’s own GitHub describes it as an OCR engine and command-line program, with Tesseract 4 adding an LSTM-based engine focused on line recognition. ([GitHub][2])
 
@@ -162,7 +164,7 @@ If the layout changes, use OCR bounding boxes and merge text-dense rectangles. I
 
 For each candidate crop, run:
 
-1. **PaddleOCR** locally for cheap extraction.
+1. **Apple Vision OCR** (`ocrmac`) locally for cheap extraction on macOS.
 2. **Vision LLM** only for frames with poor OCR, low confidence, tiny text, or snippets you actually care about.
 3. Preserve timestamp + screenshot filename + raw OCR.
 
@@ -234,7 +236,7 @@ That sidecar is essential because you will need to audit mistakes.
 Use:
 
 1. **FFmpeg / PySceneDetect** for frame extraction.
-2. **PaddleOCR** for local detection/OCR.
+2. **Apple Vision OCR** (`ocrmac`) for local detection/OCR on macOS.
 3. **A vision LLM** for hard frames.
 4. **A code LLM** for merging and repairing OCR output.
 5. **Keep timestamped screenshots** as evidence.
@@ -274,7 +276,6 @@ video
 
 For occasional flashed snippets, this should work very well. For continuous live coding with scrolling, popups, cursor occlusion, and partial edits, it becomes a real computer-vision/code-reconstruction problem — exactly why PSC2CODE, Codemotion, ACE, and CodeSCAN exist.
 
-[1]: https://github.com/PADDLEPADDLE/PADDLEOCR?utm_source=chatgpt.com "GitHub - PaddlePaddle/PaddleOCR: Turn any PDF or image ..."
 [2]: https://github.com/tesseract-ocr/tesseract?utm_source=chatgpt.com "Tesseract Open Source OCR Engine (main repository)"
 [3]: https://www.mdpi.com/2227-7390/12/7/1036 "Optimizing OCR Performance for Programming Videos: The Role of Image Super-Resolution and Large Language Models | MDPI"
 [4]: https://github.com/breakthrough/pyscenedetect "GitHub - Breakthrough/PySceneDetect: :movie_camera: Python and OpenCV-based scene cut/transition detection program & library. · GitHub"

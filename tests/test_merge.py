@@ -180,12 +180,12 @@ def test_provenance_attributes_per_extraction_when_one_frame_feeds_two_clusters(
     # land in separate clusters. Each extraction's raw_ocr must map to *its own* cleaned code, not
     # whichever snippet happened to be written last for that frame.
     frame = Frame(path=Path("/frames/hard.png"), timestamp_ms=0)
-    paddle = Extraction(
-        frame=frame, text="def foo():\n    return 1", confidence=0.9, backend="paddle"
+    local = Extraction(
+        frame=frame, text="def foo():\n    return 1", confidence=0.9, backend="macos-vision"
     )
     vision = Extraction(frame=frame, text="import numpy as np", confidence=0.9, backend="vision")
 
-    results = merge_results([paddle, vision])
+    results = merge_results([local, vision])
     assert len(results) == 2  # distinct transcriptions -> two snippets, both citing the same frame
 
     provenance = build_provenance(results)
