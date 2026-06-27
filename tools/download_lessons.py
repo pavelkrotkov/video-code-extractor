@@ -8,6 +8,7 @@
 import argparse
 import re
 import subprocess
+import sys
 from urllib.parse import urlparse
 
 import requests
@@ -53,8 +54,10 @@ def main():
     lesson_links = list(dict.fromkeys(lesson_links))
 
     if not lesson_links:
-        print(f"No lesson links containing '/lesson/' found at {course_url}")
-        return
+        sys.exit(
+            f"Error: No lesson links containing '/lesson/' found at {course_url}.\n"
+            "Please ensure you have configured your session cookies in the script if the course requires authentication."
+        )
 
     # 2. For each lesson, fetch the page and extract the .m3u8 URL
     m3u8_pattern = re.compile(r'(https://[^"\'\s]+\.m3u8[^"\'\s]*)')  # adjust as needed
@@ -63,6 +66,7 @@ def main():
     for i, lesson_url in enumerate(lesson_links):
         print(f"Processing lesson {i + 1}/{len(lesson_links)}: {lesson_url}")
         r = session.get(lesson_url)
+        r.raise_for_status()
         # Search for m3u8 in the HTML (sometimes it's in a <script>)
         match = m3u8_pattern.search(r.text)
         if not match:
@@ -76,6 +80,12 @@ def main():
         else:
             print("  WARNING: Could not find m3u8 URL")
 
+    if not outputs:
+        sys.exit(
+            "Error: No m3u8 video URLs could be found in any of the lessons.\n"
+            "Your session cookies may have expired or are invalid for the lesson pages."
+        )
+
     # 3. Stream-copy each HLS playlist into an .mp4 (no re-encode)
     # Reuse the same UA/cookies as the session so the CDN accepts the segment requests.
     ua = session.headers.get("User-Agent", "Mozilla/5.0")
@@ -87,24 +97,30 @@ def main():
     for idx, slug, m3u8_url in outputs:
         out = f"lesson_{idx:02d}_{slug}.mp4" if slug else f"lesson_{idx:02d}.mp4"
         print(f"Downloading {out} <- {m3u8_url}")
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-headers",
-                hdrs,
-                "-i",
-                m3u8_url,
-                "-c",
-                "copy",
-                "-bsf:a",
-                "aac_adtstoasc",  # fix AAC ADTS -> ASC for MP4 container
-                "-movflags",
-                "+faststart",
-                out,
-            ],
-            check=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-headers",
+                    hdrs,
+                    "-i",
+                    m3u8_url,
+                    "-c",
+                    "copy",
+                    "-bsf:a",
+                    "aac_adtstoasc",  # fix AAC ADTS -> ASC for MP4 container
+                    "-movflags",
+                    "+faststart",
+                    out,
+                ],
+                check=True,
+            )
+        except FileNotFoundError:
+            sys.exit(
+                "Error: 'ffmpeg' is not installed or not found in your PATH. "
+                "Please install ffmpeg to download lessons."
+            )
 
 
 if __name__ == "__main__":
