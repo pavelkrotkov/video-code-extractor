@@ -160,8 +160,12 @@ def _indent_prefixes(
         if not columns or x - columns[-1] > tol:
             columns.append(x)
     # Snap each line to its nearest column (ties -> leftmost) so a left edge near a column boundary
-    # can't drift to the wrong level.
-    return ["    " * min(range(len(columns)), key=lambda i: abs(x - columns[i])) for x in lefts]
+    # can't drift to the wrong level. ``default=0`` makes the invariant explicit: ``columns`` is
+    # non-empty whenever ``lefts`` is, so ``min`` never actually sees an empty range here.
+    return [
+        "    " * min(range(len(columns)), key=lambda i: abs(x - columns[i]), default=0)
+        for x in lefts
+    ]
 
 
 def _to_extraction(

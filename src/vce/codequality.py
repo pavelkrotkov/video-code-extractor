@@ -36,8 +36,10 @@ _NOTEBOOK_PROMPT = re.compile(r"^\s*(?:In|Out)\s*\[\s*[\d ]*\]\s*:?\s*$")
 # A bare line made up entirely of numeric / array punctuation — the fingerprint of *rendered*
 # output (a printed ndarray slice or numeric table), not source.
 _NUMERIC_LINE = re.compile(r"^[\s\d.,eE+\-]*[\[(][\s\d.,eE+\-\[\]()]*$")
-# A line that is a printed repr of an array/tensor/frame, e.g. ``array([0., 0., 0.])``.
-_ARRAY_REPR = re.compile(r"^(?:array|tensor|matrix|DataFrame|Series)\s*\(")
+# A line that is a printed repr of an array/tensor, e.g. ``array([0., 0., 0.])``. Deliberately
+# excludes pandas ``DataFrame(...)`` / ``Series(...)``: pandas prints those as text tables, never in
+# constructor form, so ``DataFrame([1, 2, 3])`` is only ever *source* and must not be stripped.
+_ARRAY_REPR = re.compile(r"^(?:array|tensor|matrix)\s*\(")
 
 # Strong, line-anchored Python markers used to decide whether to run the Python validator at all.
 # Deliberately conservative: prose and other languages must not be labelled Python and then flagged.
@@ -48,17 +50,29 @@ _PYTHON_MARKERS = re.compile(
 _PYTHON_BLOCK = re.compile(
     r"(?m)^\s*(?:if|elif|else|for|while|with|try|except|finally)\b.*:\s*(?:#.*)?$"
 )
+# Keyword-less Python statements: an assignment / augmented-assignment (``y = ...``, ``a.b += 1``,
+# ``x[i] = ...``) or a call at line start (``model.fit(...)``). These carry no def/import/class
+# keyword, so without this a broken ``y = jnp.ones((3, 3)`` would never be detected as Python and
+# would slip past validity flagging. The call form requires ``name(`` with no space so prose like
+# "options (see above)" does not match.
+_PYTHON_STATEMENT = re.compile(
+    r"^\s*[\w.]+(?:\[[^\]\n]*\])?\s*(?:[-+*/%@&|^]|//|\*\*)?=(?!=)"  # assignment / aug-assign
+    r"|^\s*[\w.]+\(",  # call: name( with no intervening space
+    re.MULTILINE,
+)
 
 
 def detect_language(text: str) -> str | None:
     """Best-effort source-language label for ``text`` (currently ``"python"`` or ``None``).
 
-    Intentionally conservative: returns ``"python"`` only on strong Python markers (``import`` /
-    ``from ... import`` statements, ``def`` / ``async def`` / ``class`` / decorator headers, or a
-    control-flow block header ending in ``:``). Prose and other languages fall through to ``None``
-    so they are never run through the Python validator and wrongly flagged as broken code.
+    Returns ``"python"`` on strong Python markers (``import`` / ``from ... import`` statements,
+    ``def`` / ``async def`` / ``class`` / decorator headers, control-flow block headers ending in
+    ``:``) *or* keyword-less Python statements (an assignment or a call). The latter matters because
+    much real code — ``y = jnp.ones((3, 3))``, ``model.fit(x)`` — carries no keyword, and without it
+    a broken such line would never be validated or flagged. Clear prose (no assignment, call, or
+    keyword) still falls through to ``None`` so it is never run through the Python validator.
     """
-    if _PYTHON_MARKERS.search(text) or _PYTHON_BLOCK.search(text):
+    if _PYTHON_MARKERS.search(text) or _PYTHON_BLOCK.search(text) or _PYTHON_STATEMENT.search(text):
         return "python"
     return None
 
@@ -75,7 +89,9 @@ def parses_as_python(text: str) -> bool:
         return False
     try:
         ast.parse(stripped)
-    except (SyntaxError, ValueError):  # ValueError covers e.g. source with embedded null bytes
+    except (SyntaxError, ValueError, RecursionError):
+        # SyntaxError: malformed source; ValueError: e.g. embedded null bytes; RecursionError:
+        # pathologically deep nesting from OCR noise. The contract is "never raises".
         return False
     return True
 
@@ -152,7 +168,10 @@ def _variant_rank(extraction: Extraction) -> tuple[int, int, int, float, int]:
     """
     text = extraction.text
     nonblank = sum(1 for line in text.splitlines() if line.strip())
-    valid = int(detect_language(text) == "python" and parses_as_python(text))
+    # Prefer any variant that parses as Python, independent of keyword-based language detection, so
+    # keyword-less code (``y = jnp.ones((3, 3))``) still wins over a broken sibling. Non-Python
+    # clusters parse as nothing here and fall through to the completeness/confidence tie-breakers.
+    valid = int(parses_as_python(text))
     return (valid, nonblank, len(text), extraction.confidence, -extraction.frame.timestamp_ms)
 
 

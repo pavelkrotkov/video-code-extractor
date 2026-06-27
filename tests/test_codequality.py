@@ -30,9 +30,31 @@ def test_detect_language_recognizes_python_markers():
     assert detect_language("for i in range(3):\n    pass") == "python"
 
 
+def test_detect_language_recognizes_keyword_less_statements():
+    # Assignments and calls carry no def/import/class keyword but are still Python; without this a
+    # broken `y = jnp.ones((3, 3)` would never be validated or flagged.
+    assert detect_language("y = jnp.ones((3, 3))") == "python"
+    assert detect_language("self.data = []") == "python"
+    assert detect_language("model.fit(x, y)") == "python"
+
+
 def test_detect_language_returns_none_for_prose():
     assert detect_language("the quick brown fox") is None
     assert detect_language("Select one of the options from the menu") is None
+
+
+def test_keyword_less_invalid_python_is_suspect_and_flagged():
+    # The gemini gap: a keyword-less assignment that does not parse must be caught.
+    assert is_suspect("y = jnp.ones((3, 3)")  # missing closing paren
+    assert not is_suspect("y = jnp.ones((3, 3))")  # valid -> not suspect
+
+
+def test_pandas_constructors_are_not_treated_as_rendered_output():
+    # DataFrame(...) / Series(...) are source, not printed output, and must survive cleaning.
+    assert not contains_notebook_chrome("DataFrame([1, 2, 3, 4, 5])")
+    assert (
+        clean_transcription("df = DataFrame([1, 2, 3, 4, 5])") == "df = DataFrame([1, 2, 3, 4, 5])"
+    )
 
 
 # --- python validity ----------------------------------------------------------------------
