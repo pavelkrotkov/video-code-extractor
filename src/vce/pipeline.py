@@ -200,20 +200,24 @@ class Pipeline:
         t_dedup = time.perf_counter() - t0
 
         # Stage 3/5: OCR extraction + scoring gate (cropping is inline via _image_for)
+        # Use indexed slots so escalated frames are placed back at their original position,
+        # preserving chronological order for merge_results.
         print(f"[3/5] Extracting code from {len(deduped)} frames...", file=sys.stderr)
         t0 = time.perf_counter()
-        passed: list[Extraction] = []
-        needs_escalation: list[tuple[Frame, Path, Extraction]] = []
-        with tqdm(deduped, desc="  OCR", unit="frame", file=sys.stderr) as pbar:
-            for frame in pbar:
+        passed: list[Extraction | None] = [None] * len(deduped)
+        needs_escalation: list[tuple[int, Frame, Path, Extraction]] = []
+        with tqdm(
+            enumerate(deduped), total=len(deduped), desc="  OCR", unit="frame", file=sys.stderr
+        ) as pbar:
+            for i, frame in pbar:
                 image = self._image_for(frame, crops_dir)
                 extraction = self._primary.extract(image, frame)
                 if score_code_likeness(frame, extraction.text).score < config.score_threshold:
                     continue
                 if self._escalation is not None and extraction.confidence < config.escalate_below:
-                    needs_escalation.append((frame, image, extraction))
+                    needs_escalation.append((i, frame, image, extraction))
                 else:
-                    passed.append(extraction)
+                    passed[i] = extraction
         t_ocr = time.perf_counter() - t0
 
         # Stage 4/5: Escalation
@@ -225,18 +229,18 @@ class Pipeline:
                 file=sys.stderr,
             )
             with tqdm(needs_escalation, desc="  Escalate", unit="frame", file=sys.stderr) as pbar:
-                for frame, image, primary_ext in pbar:
+                for i, frame, image, primary_ext in pbar:
                     escalated = self._escalation.extract(image, frame)
                     escalated_count += 1
                     if score_code_likeness(frame, escalated.text).score >= config.score_threshold:
-                        passed.append(escalated)
+                        passed[i] = escalated
                     else:
-                        passed.append(primary_ext)
+                        passed[i] = primary_ext
         else:
             print("[4/5] No escalation needed.", file=sys.stderr)
         t_escalate = time.perf_counter() - t0
 
-        extractions = passed
+        extractions = [ext for ext in passed if ext is not None]
 
         # Stage 5/5: Merge
         print(f"[5/5] Merging {len(extractions)} extraction(s)...", file=sys.stderr)

@@ -181,7 +181,7 @@ def _run_extract(args: argparse.Namespace) -> int:
         if s.frames_after_dedup
         else 0
     )
-    bar = "─" * 42
+    bar = "-" * 42
     time_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
     print(f"\n{bar}")
     print(f"  Frames extracted:    {s.frames_raw:>8,}")

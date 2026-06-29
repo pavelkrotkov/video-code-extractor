@@ -52,7 +52,10 @@ def get_duration(url_or_path, hdrs_str=""):
 
 
 def _hms_to_secs(hms):
-    h, m, s = hms.split(":")
+    parts = hms.split(":")
+    if len(parts) != 3:
+        raise ValueError(f"unexpected time format: {hms!r}")
+    h, m, s = parts
     return int(h) * 3600 + int(m) * 60 + float(s)
 
 
@@ -113,7 +116,10 @@ def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
     for line in proc.stderr:
         m = _TIME_RE.search(line)
         if m:
-            elapsed = _hms_to_secs(m.group(1))
+            try:
+                elapsed = _hms_to_secs(m.group(1))
+            except (ValueError, TypeError):
+                continue
             if total_secs:
                 pct = min(100, int(elapsed / total_secs * 100))
                 print(
@@ -132,31 +138,35 @@ def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
 def merge_lessons(raw_dir, lesson_paths, merged_path):
     """Concatenate lesson MP4s into a single file, then remove the individual files."""
     concat_file = raw_dir / "concat.txt"
-    concat_file.write_text(
-        "\n".join(f"file '{p.resolve()}'" for p in lesson_paths) + "\n",
-        encoding="utf-8",
-    )
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat_file),
-            "-c",
-            "copy",
-            str(merged_path),
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
-    concat_file.unlink()
+    lines = []
     for p in lesson_paths:
-        p.unlink()
+        # as_posix() avoids Windows backslash issues; escape single quotes for ffmpeg's parser
+        safe = p.resolve().as_posix().replace("'", "\\'")
+        lines.append(f"file '{safe}'")
+    concat_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_file),
+                "-c",
+                "copy",
+                str(merged_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        for p in lesson_paths:
+            p.unlink()
+    finally:
+        concat_file.unlink(missing_ok=True)
 
 
 def main():
@@ -272,6 +282,9 @@ def main():
                 f"Warning: merge failed (exit code {e.returncode}). Individual files kept.",
                 file=sys.stderr,
             )
+            # Remove any partial output so a corrupt file isn't mistaken for a successful merge
+            if merged_path.exists():
+                merged_path.unlink()
             merged_path = None
 
     # 5. Print final stats
