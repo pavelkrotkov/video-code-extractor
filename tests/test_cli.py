@@ -12,7 +12,7 @@ import pytest
 import vce
 from vce import cli
 from vce.frames import FFmpegNotFoundError
-from vce.types import BBox
+from vce.types import BBox, PipelineStats
 
 
 @pytest.fixture
@@ -21,12 +21,26 @@ def on_macos(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
 
 
+_FAKE_STATS = PipelineStats(
+    frames_raw=8,
+    frames_after_dedup=8,
+    frames_passed_scoring=5,
+    escalated_count=0,
+    snippets_merged=2,
+    output_lines=10,
+    output_chars=200,
+    stage_times=(),
+    total_time=1.5,
+)
+
+
 class _FakeResult:
     script_path = "out/lesson.py"
     provenance_path = "out/lesson.provenance.json"
     num_snippets = 2
     frames_kept = 5
     frames_total = 8
+    stats = _FAKE_STATS
 
 
 def _install_fake_pipeline(monkeypatch, *, run=None):
@@ -71,7 +85,7 @@ def test_extract_defaults():
     assert str(args.video) == "video.mp4"
     assert args.fps == 1.0
     assert args.backend == cli.MACOS_VISION
-    assert str(args.out) == "."
+    assert str(args.out) == "out"
     assert args.score_threshold == 0.4
     assert args.crop is None
 

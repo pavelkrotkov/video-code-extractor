@@ -12,6 +12,7 @@ dependencies = [
     # Apple Vision OCR (the default local backend) is macOS-only; the Darwin marker keeps it out
     # of Linux/Windows installs and CI while making it part of a normal macOS install.
     "ocrmac>=1.0; sys_platform == 'darwin'",
+    "tqdm>=4.0",
 ]
 
 [project.scripts]

@@ -68,3 +68,18 @@ class MergedSnippet:
     code: str
     sources: tuple[Frame, ...] = field(default_factory=tuple)
     notes: str = ""
+
+
+@dataclass(frozen=True)
+class PipelineStats:
+    """Counters and wall-clock timings collected during a Pipeline.run() call."""
+
+    frames_raw: int
+    frames_after_dedup: int
+    frames_passed_scoring: int
+    escalated_count: int
+    snippets_merged: int
+    output_lines: int
+    output_chars: int
+    stage_times: tuple[tuple[str, float], ...]
+    total_time: float
