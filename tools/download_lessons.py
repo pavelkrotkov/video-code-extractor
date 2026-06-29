@@ -47,7 +47,7 @@ def get_duration(url_or_path, hdrs_str=""):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return float(r.stdout.strip())
-    except Exception:
+    except (subprocess.CalledProcessError, ValueError, OSError):
         return None
 
 
@@ -82,7 +82,7 @@ def _fmt_dur_hm(secs):
     return f"{h}h {m}m" if h else f"{m}m"
 
 
-_TIME_RE = re.compile(r"time=(\d+:\d+:\d+\.\d+)")
+_TIME_RE = re.compile(r"time=(\d+:\d+:\d+(?:\.\d+)?)")
 
 
 def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
@@ -113,7 +113,7 @@ def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
         encoding="utf-8",
         errors="replace",
     )
-    for line in proc.stderr:
+    for line in proc.stderr or []:
         m = _TIME_RE.search(line)
         if m:
             try:
@@ -163,6 +163,10 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
             stderr=subprocess.DEVNULL,
             check=True,
         )
+        if not merged_path.exists() or merged_path.stat().st_size == 0:
+            raise subprocess.CalledProcessError(
+                1, "ffmpeg", stderr="merged file is empty or missing"
+            )
         for p in lesson_paths:
             p.unlink()
     finally:
@@ -279,9 +283,14 @@ def main():
         print(f"Merging {len(downloaded)} lesson(s) -> {merged_path}")
         try:
             merge_lessons(raw_dir, downloaded, merged_path)
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, OSError) as e:
+            err_msg = (
+                f"exit code {e.returncode}"
+                if isinstance(e, subprocess.CalledProcessError)
+                else str(e)
+            )
             print(
-                f"Warning: merge failed (exit code {e.returncode}). Individual files kept.",
+                f"Warning: merge failed ({err_msg}). Individual files kept.",
                 file=sys.stderr,
             )
             # Remove any partial output so a corrupt file isn't mistaken for a successful merge
