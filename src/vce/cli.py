@@ -63,7 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=MACOS_VISION,
         help="primary extraction backend (default macos-vision)",
     )
-    extract.add_argument("--out", type=Path, default=Path("out"), help="output directory (default out/)")
+    extract.add_argument(
+        "--out", type=Path, default=Path("out"), help="output directory (default out/)"
+    )
     extract.add_argument(
         "--score-threshold",
         type=float,
@@ -177,9 +179,7 @@ def _run_extract(args: argparse.Namespace) -> int:
     mins, secs = divmod(int(s.total_time), 60)
     dedup_pct = round((1 - s.frames_after_dedup / s.frames_raw) * 100) if s.frames_raw else 0
     pass_pct = (
-        round(s.frames_passed_scoring / s.frames_after_dedup * 100)
-        if s.frames_after_dedup
-        else 0
+        round(s.frames_passed_scoring / s.frames_after_dedup * 100) if s.frames_after_dedup else 0
     )
     bar = "-" * 42
     time_str = f"{mins}m {secs:02d}s" if mins else f"{secs}s"

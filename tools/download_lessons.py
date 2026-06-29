@@ -254,7 +254,9 @@ def main():
     for idx, lslug, m3u8_url in outputs:
         out_path = raw_dir / (f"lesson_{idx:02d}_{lslug}.mp4" if lslug else f"lesson_{idx:02d}.mp4")
         try:
-            download_with_progress(m3u8_url, out_path, idx, len(outputs), lslug or f"lesson_{idx:02d}", hdrs)
+            download_with_progress(
+                m3u8_url, out_path, idx, len(outputs), lslug or f"lesson_{idx:02d}", hdrs
+            )
             downloaded.append(out_path)
         except FileNotFoundError:
             sys.exit(
