@@ -167,10 +167,16 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
             raise subprocess.CalledProcessError(
                 1, "ffmpeg", stderr="merged file is empty or missing"
             )
-        for p in lesson_paths:
-            p.unlink()
     finally:
         concat_file.unlink(missing_ok=True)
+
+    # Delete sources separately: a failure here doesn't invalidate the merged file,
+    # so warn per file rather than treating it as a merge failure.
+    for p in lesson_paths:
+        try:
+            p.unlink()
+        except OSError as exc:
+            print(f"Warning: could not remove {p}: {exc}", file=sys.stderr)
 
 
 def main():
@@ -278,7 +284,15 @@ def main():
 
     # 4. Optionally merge all lessons into one file
     merged_path = None
-    if not args.no_merge and len(downloaded) > 0:
+    partial = len(downloaded) < len(outputs)
+    if not args.no_merge and partial:
+        print(
+            f"Warning: only {len(downloaded)}/{len(outputs)} lessons downloaded; "
+            "skipping merge to avoid an incomplete combined file. "
+            "Re-run with --no-merge to suppress this check.",
+            file=sys.stderr,
+        )
+    if not args.no_merge and not partial:
         merged_path = raw_dir / f"{slug}.mp4"
         print(f"Merging {len(downloaded)} lesson(s) -> {merged_path}")
         try:
