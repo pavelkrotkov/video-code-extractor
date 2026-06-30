@@ -139,6 +139,9 @@ def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
 def merge_lessons(raw_dir, lesson_paths, merged_path):
     """Concatenate lesson MP4s into a single file, then remove the individual files."""
     concat_file = raw_dir / f"concat_{merged_path.stem}.txt"
+    # Write to a temp path and rename on success so a prior run's merged file is never
+    # touched if ffmpeg fails partway through.
+    tmp_path = merged_path.with_suffix(".tmp.mp4")
     lines = []
     for p in lesson_paths:
         # as_posix() avoids Windows backslash issues; escape single quotes for ffmpeg's parser
@@ -158,16 +161,18 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
                 str(concat_file),
                 "-c",
                 "copy",
-                str(merged_path),
+                str(tmp_path),
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
         )
-        if not merged_path.exists() or merged_path.stat().st_size == 0:
+        if not tmp_path.exists() or tmp_path.stat().st_size == 0:
             raise OSError("merged file is empty or missing")
+        tmp_path.rename(merged_path)
     finally:
         concat_file.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)  # no-op once rename succeeds
 
     # Delete sources separately: a failure here doesn't invalidate the merged file,
     # so warn per file rather than treating it as a merge failure.
@@ -287,7 +292,7 @@ def main():
     partial = len(downloaded) < len(lesson_links)
     if not args.no_merge and partial:
         print(
-            f"Warning: only {len(downloaded)}/{len(outputs)} lessons downloaded; "
+            f"Warning: only {len(downloaded)}/{len(lesson_links)} lessons downloaded; "
             "skipping merge to avoid an incomplete combined file. "
             "Re-run with --no-merge to suppress this check.",
             file=sys.stderr,
@@ -306,9 +311,6 @@ def main():
                 f"Warning: merge failed ({err_msg}). Individual files kept.",
                 file=sys.stderr,
             )
-            # Remove any partial output so a corrupt file isn't mistaken for a successful merge
-            if merged_path.exists():
-                merged_path.unlink()
             merged_path = None
 
     # 5. Print final stats
