@@ -120,15 +120,16 @@ def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
                 elapsed = _hms_to_secs(m.group(1))
             except (ValueError, TypeError):
                 continue
-            if total_secs:
-                pct = min(100, int(elapsed / total_secs * 100))
-                print(
-                    f"\r  {pct:3d}%  {_fmt_time(elapsed)} / {_fmt_time(total_secs)}",
-                    end="",
-                    flush=True,
-                )
-            else:
-                print(f"\r  {_fmt_time(elapsed)} elapsed", end="", flush=True)
+            if sys.stdout.isatty():
+                if total_secs:
+                    pct = min(100, int(elapsed / total_secs * 100))
+                    print(
+                        f"\r  {pct:3d}%  {_fmt_time(elapsed)} / {_fmt_time(total_secs)}",
+                        end="",
+                        flush=True,
+                    )
+                else:
+                    print(f"\r  {_fmt_time(elapsed)} elapsed", end="", flush=True)
     proc.wait()
     print()
     if proc.returncode != 0:
@@ -137,7 +138,7 @@ def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
 
 def merge_lessons(raw_dir, lesson_paths, merged_path):
     """Concatenate lesson MP4s into a single file, then remove the individual files."""
-    concat_file = raw_dir / "concat.txt"
+    concat_file = raw_dir / f"concat_{merged_path.stem}.txt"
     lines = []
     for p in lesson_paths:
         # as_posix() avoids Windows backslash issues; escape single quotes for ffmpeg's parser
@@ -164,9 +165,7 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
             check=True,
         )
         if not merged_path.exists() or merged_path.stat().st_size == 0:
-            raise subprocess.CalledProcessError(
-                1, "ffmpeg", stderr="merged file is empty or missing"
-            )
+            raise OSError("merged file is empty or missing")
     finally:
         concat_file.unlink(missing_ok=True)
 
@@ -284,7 +283,8 @@ def main():
 
     # 4. Optionally merge all lessons into one file
     merged_path = None
-    partial = len(downloaded) < len(outputs)
+    # Compare against lesson_links (not outputs) so lessons that had no m3u8 also count as missing
+    partial = len(downloaded) < len(lesson_links)
     if not args.no_merge and partial:
         print(
             f"Warning: only {len(downloaded)}/{len(outputs)} lessons downloaded; "
@@ -298,11 +298,10 @@ def main():
         try:
             merge_lessons(raw_dir, downloaded, merged_path)
         except (subprocess.CalledProcessError, OSError) as e:
-            err_msg = (
-                f"exit code {e.returncode}"
-                if isinstance(e, subprocess.CalledProcessError)
-                else str(e)
-            )
+            if isinstance(e, subprocess.CalledProcessError):
+                err_msg = f"exit code {e.returncode}"
+            else:
+                err_msg = str(e)
             print(
                 f"Warning: merge failed ({err_msg}). Individual files kept.",
                 file=sys.stderr,
