@@ -31,3 +31,5 @@ GEMINI.md
 frames/
 output/
 .vce_cache/
+raw/
+out/

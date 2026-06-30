@@ -26,8 +26,12 @@ orchestration itself is unit-testable without touching the network or the disk-b
 
 from __future__ import annotations
 
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from tqdm import tqdm
 
 from vce.backends.base import ExtractionBackend
 from vce.cropping import crop_region
@@ -42,7 +46,7 @@ from vce.merge import (
     write_provenance,
 )
 from vce.scoring import score_code_likeness
-from vce.types import BBox, Extraction, Frame, MergedSnippet
+from vce.types import BBox, Extraction, Frame, MergedSnippet, PipelineStats
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,7 @@ class PipelineResult:
     snippets: tuple[MergedSnippet, ...]
     frames_total: int
     frames_kept: int
+    stats: PipelineStats
 
     @property
     def num_snippets(self) -> int:
@@ -165,26 +170,6 @@ class Pipeline:
             return frame.path
         return crop_region(frame, self._config.crop, crops_dir)
 
-    def _extract_kept(self, frame: Frame, image: Path) -> Extraction | None:
-        """Cheap-extract, gate on code-likeness, then escalate if the cheap read was unsure.
-
-        Returns ``None`` for a frame that fails the code-likeness gate (so it is dropped before any
-        expensive escalation). Otherwise returns the extraction to merge — the escalation backend's
-        if it ran, else the primary's.
-        """
-        extraction = self._primary.extract(image, frame)
-        if score_code_likeness(frame, extraction.text).score < self._config.score_threshold:
-            return None
-        if self._escalation is not None and extraction.confidence < self._config.escalate_below:
-            escalated = self._escalation.extract(image, frame)
-            # Only adopt the escalation if it *also* reads as code. Vision is the accuracy tier, so
-            # a code-like result is preferred — but an empty or off-target response must not discard
-            # the primary transcription that already passed the gate (which would silently drop the
-            # snippet from the script and provenance).
-            if score_code_likeness(frame, escalated.text).score >= self._config.score_threshold:
-                extraction = escalated
-        return extraction
-
     def run(self, video: Path) -> PipelineResult:
         """Execute every stage for ``video`` and write the script + provenance sidecar.
 
@@ -192,25 +177,74 @@ class Pipeline:
         ``FileNotFoundError`` for a missing video, ``ImportError`` for a missing backend extra);
         :mod:`vce.cli` turns those into clean user-facing messages.
         """
+        t_total_start = time.perf_counter()
         video = Path(video)
         config = self._config
         base = _artifact_base(video)
-        # Per-video crop dir, for the same reason as the frames dir (see _candidate_frames).
         crops_dir = config.out_dir / f"{base}_crops"
 
         # Create the output directory up front so an unwritable ``--out`` fails fast (as a clean
         # OSError the CLI translates) before any expensive frame extraction / OCR work is wasted.
         config.out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Stage 1/5: Frame extraction
+        print("[1/5] Extracting frames...", file=sys.stderr)
+        t0 = time.perf_counter()
         frames = _candidate_frames(video, config)
+        t_frames = time.perf_counter() - t0
+
+        # Stage 2/5: Deduplication
+        print(f"[2/5] Deduplicating {len(frames)} frames...", file=sys.stderr)
+        t0 = time.perf_counter()
         deduped = dedup_frames(frames, max_distance=config.dedup_max_distance)
+        t_dedup = time.perf_counter() - t0
 
-        extractions: list[Extraction] = []
-        for frame in deduped:
-            extraction = self._extract_kept(frame, self._image_for(frame, crops_dir))
-            if extraction is not None:
-                extractions.append(extraction)
+        # Stage 3/5: OCR extraction + scoring gate (cropping is inline via _image_for)
+        # Use indexed slots so escalated frames are placed back at their original position,
+        # preserving chronological order for merge_results.
+        print(f"[3/5] Extracting code from {len(deduped)} frames...", file=sys.stderr)
+        t0 = time.perf_counter()
+        passed: list[Extraction | None] = [None] * len(deduped)
+        needs_escalation: list[tuple[int, Frame, Path, Extraction]] = []
+        with tqdm(
+            enumerate(deduped), total=len(deduped), desc="  OCR", unit="frame", file=sys.stderr
+        ) as pbar:
+            for i, frame in pbar:
+                image = self._image_for(frame, crops_dir)
+                extraction = self._primary.extract(image, frame)
+                if score_code_likeness(frame, extraction.text).score < config.score_threshold:
+                    continue
+                if self._escalation is not None and extraction.confidence < config.escalate_below:
+                    needs_escalation.append((i, frame, image, extraction))
+                else:
+                    passed[i] = extraction
+        t_ocr = time.perf_counter() - t0
 
+        # Stage 4/5: Escalation
+        escalated_count = 0
+        t0 = time.perf_counter()
+        if needs_escalation and self._escalation is not None:
+            print(
+                f"[4/5] Escalating {len(needs_escalation)} low-confidence frames...",
+                file=sys.stderr,
+            )
+            with tqdm(needs_escalation, desc="  Escalate", unit="frame", file=sys.stderr) as pbar:
+                for i, frame, image, primary_ext in pbar:
+                    escalated = self._escalation.extract(image, frame)
+                    escalated_count += 1
+                    if score_code_likeness(frame, escalated.text).score >= config.score_threshold:
+                        passed[i] = escalated
+                    else:
+                        passed[i] = primary_ext
+        else:
+            print("[4/5] No escalation needed.", file=sys.stderr)
+        t_escalate = time.perf_counter() - t0
+
+        extractions = [ext for ext in passed if ext is not None]
+
+        # Stage 5/5: Merge
+        print(f"[5/5] Merging {len(extractions)} extraction(s)...", file=sys.stderr)
+        t0 = time.perf_counter()
         results = merge_results(
             extractions,
             similarity_threshold=config.similarity_threshold,
@@ -218,11 +252,32 @@ class Pipeline:
             conflict_margin=config.conflict_margin,
         )
         snippets = [r.snippet for r in results]
+        t_merge = time.perf_counter() - t0
 
         script_path = config.out_dir / f"{base}.py"
         provenance_path = config.out_dir / f"{base}.provenance.json"
-        script_path.write_text(_build_script(snippets), encoding="utf-8")
+        script_text = _build_script(snippets)
+        script_path.write_text(script_text, encoding="utf-8")
         write_provenance(provenance_path, build_provenance(results))
+
+        total_time = time.perf_counter() - t_total_start
+        stats = PipelineStats(
+            frames_raw=len(frames),
+            frames_after_dedup=len(deduped),
+            frames_passed_scoring=len(extractions),
+            escalated_count=escalated_count,
+            snippets_merged=len(snippets),
+            output_lines=script_text.count("\n"),
+            output_chars=len(script_text),
+            stage_times=(
+                ("frames", t_frames),
+                ("dedup", t_dedup),
+                ("ocr", t_ocr),
+                ("escalate", t_escalate),
+                ("merge", t_merge),
+            ),
+            total_time=total_time,
+        )
 
         return PipelineResult(
             script_path=script_path,
@@ -230,4 +285,5 @@ class Pipeline:
             snippets=tuple(snippets),
             frames_total=len(deduped),
             frames_kept=len(extractions),
+            stats=stats,
         )
