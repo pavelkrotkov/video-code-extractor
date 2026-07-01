@@ -461,9 +461,15 @@ def main():
     merged_path = None
     no_video = len(lesson_links) - len(outputs)
     if no_video:
+        # Stdout: this is informational, not an error. The script cannot distinguish a
+        # legitimately text-only lesson from one whose m3u8 extraction failed (e.g. due
+        # to an auth-gated page or an unmatched regex). The "WARNING: Could not find m3u8"
+        # lines printed above identify which pages were affected; the user should verify
+        # these are intentionally text-only before trusting the merged file is complete.
         print(
-            f"Note: {no_video}/{len(lesson_links)} lesson page(s) had no video stream.",
-            file=sys.stderr,
+            f"Note: {no_video}/{len(lesson_links)} lesson page(s) had no extractable video "
+            "stream. Check the warnings above — if any of those pages should have had a "
+            "video, the merged file will be incomplete."
         )
     # A partial run is when we failed to download some lessons that *did* have a video stream.
     partial = len(downloaded) < len(outputs)
