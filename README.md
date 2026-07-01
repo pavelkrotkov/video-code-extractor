@@ -210,11 +210,8 @@ in the script from a valid browser session.
 
 Pass `--no-merge` to keep individual lesson files and skip the merge step.
 
-The merge is skipped automatically when any lesson failed to download, or when any lesson page
-had no extractable video stream (the script cannot tell whether such a page is genuinely
-text-only or a video lesson whose m3u8 extraction failed). Once you have inspected the
-per-lesson warnings and confirmed the missing-stream pages are text-only, re-run with
-`--force-merge` to allow the merge to proceed.
+The merge is skipped automatically only when a lesson download failed outright. Lesson pages
+with no extractable video stream (e.g. text-only pages) are noted but do not block the merge.
 
 ```
 Downloaded 12 lesson(s) (1.4 GB total)
