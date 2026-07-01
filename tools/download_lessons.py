@@ -156,7 +156,10 @@ def get_video_dimensions(path):
             text=True,
             check=True,
         )
-        w, h = r.stdout.strip().split(",")
+        parts = r.stdout.strip().split(",")
+        if len(parts) != 2:
+            return None
+        w, h = parts
         return int(w.strip()), int(h.strip())
     except (subprocess.CalledProcessError, ValueError, OSError):
         return None
@@ -221,56 +224,77 @@ def _has_audio(path):
 
 def _concat_recode(lesson_paths, out_path, target_w, target_h):
     """Re-encode all lessons, padding each to target_w x target_h, then concatenate."""
+    if not lesson_paths:
+        raise ValueError("lesson_paths cannot be empty")
     n = len(lesson_paths)
     inputs = []
     for p in lesson_paths:
         inputs += ["-i", str(p)]
 
-    audio = all(_has_audio(p) for p in lesson_paths)
+    has_audio_list = [_has_audio(p) for p in lesson_paths]
+    any_audio = any(has_audio_list)
 
-    # Scale each clip to fit within the target box (preserving aspect ratio) then pad
-    # with black to fill exactly target_w x target_h before the concat filter.
+    # Scale each clip to fit within the target box (preserving aspect ratio), pad with
+    # black to fill exactly target_w x target_h, normalize SAR to 1:1, and reset
+    # timestamps so the concat filter receives streams that all start at pts=0.
     filter_parts = []
     for i in range(n):
         filter_parts.append(
-            f"[{i}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+            f"[{i}:v]setpts=PTS-STARTPTS,"
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
             f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]"
         )
-    if audio:
-        concat_inputs = "".join(f"[v{i}][{i}:a]" for i in range(n))
+
+    if any_audio:
+        # Build per-clip audio labels. Clips with real audio get timestamp-normalized
+        # streams; silent clips get an inline anullsrc so the concat filter always
+        # receives one audio stream per segment.
+        concat_inputs = ""
+        for i in range(n):
+            if has_audio_list[i]:
+                filter_parts.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
+            else:
+                filter_parts.append(f"anullsrc=channel_layout=stereo:sample_rate=44100[a{i}]")
+            concat_inputs += f"[v{i}][a{i}]"
         filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[vout][aout]")
     else:
         concat_inputs = "".join(f"[v{i}]" for i in range(n))
         filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[vout]")
 
     map_args = ["-map", "[vout]"]
-    if audio:
+    if any_audio:
         map_args += ["-map", "[aout]"]
 
     codec_args = ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
-    if audio:
+    if any_audio:
         codec_args += ["-c:a", "aac"]
     codec_args += ["-movflags", "+faststart"]
 
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            *inputs,
-            "-filter_complex",
-            ";".join(filter_parts),
-            *map_args,
-            *codec_args,
-            str(out_path),
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                *inputs,
+                "-filter_complex",
+                ";".join(filter_parts),
+                *map_args,
+                *codec_args,
+                str(out_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"ffmpeg recode failed:\n{e.stderr}", file=sys.stderr)
+        raise
 
 
 def merge_lessons(raw_dir, lesson_paths, merged_path):
     """Merge lessons into a single file, re-encoding only if dimensions differ."""
+    if not lesson_paths:
+        raise ValueError("lesson_paths cannot be empty")
     dims = [d for d in (get_video_dimensions(p) for p in lesson_paths) if d is not None]
     if not dims:
         raise OSError("could not determine video dimensions for any lesson; cannot merge")
