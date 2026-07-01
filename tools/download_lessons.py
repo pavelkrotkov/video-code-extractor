@@ -234,7 +234,7 @@ def _concat_recode(lesson_paths, out_path, target_w, target_h):
     for i in range(n):
         filter_parts.append(
             f"[{i}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2[v{i}]"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]"
         )
     if audio:
         concat_inputs = "".join(f"[v{i}][{i}:a]" for i in range(n))
@@ -274,6 +274,12 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
     dims = [d for d in (get_video_dimensions(p) for p in lesson_paths) if d is not None]
     if not dims:
         raise OSError("could not determine video dimensions for any lesson; cannot merge")
+    if len(dims) < len(lesson_paths):
+        n_failed = len(lesson_paths) - len(dims)
+        raise OSError(
+            f"could not probe dimensions for {n_failed} lesson(s); "
+            "cannot safely decide whether to stream-copy or re-encode"
+        )
 
     # Write to a temp path and rename on success so a prior run's merged file is never
     # touched if ffmpeg fails partway through.
