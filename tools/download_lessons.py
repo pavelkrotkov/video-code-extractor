@@ -136,12 +136,35 @@ def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
         raise subprocess.CalledProcessError(proc.returncode, "ffmpeg")
 
 
-def merge_lessons(raw_dir, lesson_paths, merged_path):
-    """Concatenate lesson MP4s into a single file, then remove the individual files."""
-    concat_file = raw_dir / f"concat_{merged_path.stem}.txt"
-    # Write to a temp path and rename on success so a prior run's merged file is never
-    # touched if ffmpeg fails partway through.
-    tmp_path = merged_path.with_suffix(".tmp.mp4")
+def get_video_dimensions(path):
+    """Return (width, height) of the first video stream, or None on any error."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        w, h = r.stdout.strip().split(",")
+        return int(w), int(h)
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        return None
+
+
+def _concat_copy(raw_dir, slug, lesson_paths, out_path):
+    """Stream-copy via the ffmpeg concat demuxer (lossless, fast)."""
+    concat_file = raw_dir / f"concat_{slug}.txt"
     lines = []
     for p in lesson_paths:
         # as_posix() avoids Windows backslash issues; escape single quotes for ffmpeg's parser
@@ -161,18 +184,79 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
                 str(concat_file),
                 "-c",
                 "copy",
-                str(tmp_path),
+                str(out_path),
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
         )
+    finally:
+        concat_file.unlink(missing_ok=True)
+
+
+def _concat_recode(lesson_paths, out_path, target_w, target_h):
+    """Re-encode all lessons, padding each to target_w x target_h, then concatenate."""
+    n = len(lesson_paths)
+    inputs = []
+    for p in lesson_paths:
+        inputs += ["-i", str(p)]
+
+    # Scale each clip to fit within the target box (preserving aspect ratio) then pad
+    # with black to fill exactly target_w x target_h before the concat filter.
+    filter_parts = []
+    for i in range(n):
+        filter_parts.append(
+            f"[{i}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2[v{i}]"
+        )
+    concat_inputs = "".join(f"[v{i}][{i}:a]" for i in range(n))
+    filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[vout][aout]")
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            *inputs,
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "[vout]",
+            "-map",
+            "[aout]",
+            str(out_path),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    )
+
+
+def merge_lessons(raw_dir, lesson_paths, merged_path):
+    """Merge lessons into a single file, re-encoding only if dimensions differ."""
+    dims = [d for d in (get_video_dimensions(p) for p in lesson_paths) if d is not None]
+
+    # Write to a temp path and rename on success so a prior run's merged file is never
+    # touched if ffmpeg fails partway through.
+    tmp_path = merged_path.with_suffix(".tmp.mp4")
+    try:
+        if len(set(dims)) <= 1:
+            # All videos share the same dimensions — stream copy is safe.
+            _concat_copy(raw_dir, merged_path.stem, lesson_paths, tmp_path)
+        else:
+            # Mixed dimensions — re-encode with padding to the largest bounding box.
+            target_w = max(d[0] for d in dims)
+            target_h = max(d[1] for d in dims)
+            print(
+                f"  Mixed dimensions detected; re-encoding to {target_w}x{target_h}...",
+                file=sys.stderr,
+            )
+            _concat_recode(lesson_paths, tmp_path, target_w, target_h)
+
         if not tmp_path.exists() or tmp_path.stat().st_size == 0:
             raise OSError("merged file is empty or missing")
         tmp_path.rename(merged_path)
     finally:
-        concat_file.unlink(missing_ok=True)
-        tmp_path.unlink(missing_ok=True)  # no-op once rename succeeds
+        tmp_path.unlink(missing_ok=True)
 
     # Delete sources separately: a failure here doesn't invalidate the merged file,
     # so warn per file rather than treating it as a merge failure.
