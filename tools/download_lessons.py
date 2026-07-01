@@ -246,15 +246,27 @@ def _concat_recode(lesson_paths, out_path, target_w, target_h):
         )
 
     if any_audio:
-        # Build per-clip audio labels. Clips with real audio get timestamp-normalized
-        # streams; silent clips get an inline anullsrc so the concat filter always
-        # receives one audio stream per segment.
+        # Build per-clip audio labels. Real audio is timestamp-normalized and format-
+        # normalized (aformat) so all streams share the same sample rate and channel
+        # layout before reaching the concat filter. Silent clips get a bounded anullsrc
+        # (duration set to the clip's video duration) so the concat filter never waits
+        # on an infinite stream before advancing to the next segment.
         concat_inputs = ""
         for i in range(n):
             if has_audio_list[i]:
-                filter_parts.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
+                filter_parts.append(
+                    f"[{i}:a]asetpts=PTS-STARTPTS,"
+                    f"aformat=sample_rates=44100:channel_layouts=stereo[a{i}]"
+                )
             else:
-                filter_parts.append(f"anullsrc=channel_layout=stereo:sample_rate=44100[a{i}]")
+                dur = get_duration(lesson_paths[i])
+                if dur is None:
+                    raise OSError(
+                        f"could not determine duration for silent lesson: {lesson_paths[i]}"
+                    )
+                filter_parts.append(
+                    f"anullsrc=channel_layout=stereo:sample_rate=44100:duration={dur}[a{i}]"
+                )
             concat_inputs += f"[v{i}][a{i}]"
         filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[vout][aout]")
     else:
@@ -317,6 +329,8 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
             # Round up to even numbers: libx264 requires even width and height.
             target_w = max(d[0] for d in dims)
             target_h = max(d[1] for d in dims)
+            if target_w <= 0 or target_h <= 0:
+                raise OSError(f"invalid target dimensions: {target_w}x{target_h}")
             target_w += target_w % 2
             target_h += target_h % 2
             print(
