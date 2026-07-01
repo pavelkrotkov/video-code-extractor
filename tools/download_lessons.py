@@ -157,7 +157,7 @@ def get_video_dimensions(path):
             check=True,
         )
         w, h = r.stdout.strip().split(",")
-        return int(w), int(h)
+        return int(w.strip()), int(h.strip())
     except (subprocess.CalledProcessError, ValueError, OSError):
         return None
 
@@ -194,12 +194,39 @@ def _concat_copy(raw_dir, slug, lesson_paths, out_path):
         concat_file.unlink(missing_ok=True)
 
 
+def _has_audio(path):
+    """Return True if the file has at least one audio stream."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return bool(r.stdout.strip())
+    except (subprocess.CalledProcessError, OSError):
+        return False
+
+
 def _concat_recode(lesson_paths, out_path, target_w, target_h):
     """Re-encode all lessons, padding each to target_w x target_h, then concatenate."""
     n = len(lesson_paths)
     inputs = []
     for p in lesson_paths:
         inputs += ["-i", str(p)]
+
+    audio = all(_has_audio(p) for p in lesson_paths)
 
     # Scale each clip to fit within the target box (preserving aspect ratio) then pad
     # with black to fill exactly target_w x target_h before the concat filter.
@@ -209,8 +236,21 @@ def _concat_recode(lesson_paths, out_path, target_w, target_h):
             f"[{i}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
             f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2[v{i}]"
         )
-    concat_inputs = "".join(f"[v{i}][{i}:a]" for i in range(n))
-    filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[vout][aout]")
+    if audio:
+        concat_inputs = "".join(f"[v{i}][{i}:a]" for i in range(n))
+        filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[vout][aout]")
+    else:
+        concat_inputs = "".join(f"[v{i}]" for i in range(n))
+        filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[vout]")
+
+    map_args = ["-map", "[vout]"]
+    if audio:
+        map_args += ["-map", "[aout]"]
+
+    codec_args = ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+    if audio:
+        codec_args += ["-c:a", "aac"]
+    codec_args += ["-movflags", "+faststart"]
 
     subprocess.run(
         [
@@ -219,10 +259,8 @@ def _concat_recode(lesson_paths, out_path, target_w, target_h):
             *inputs,
             "-filter_complex",
             ";".join(filter_parts),
-            "-map",
-            "[vout]",
-            "-map",
-            "[aout]",
+            *map_args,
+            *codec_args,
             str(out_path),
         ],
         stdout=subprocess.DEVNULL,
@@ -234,6 +272,8 @@ def _concat_recode(lesson_paths, out_path, target_w, target_h):
 def merge_lessons(raw_dir, lesson_paths, merged_path):
     """Merge lessons into a single file, re-encoding only if dimensions differ."""
     dims = [d for d in (get_video_dimensions(p) for p in lesson_paths) if d is not None]
+    if not dims:
+        raise OSError("could not determine video dimensions for any lesson; cannot merge")
 
     # Write to a temp path and rename on success so a prior run's merged file is never
     # touched if ffmpeg fails partway through.
@@ -244,8 +284,11 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
             _concat_copy(raw_dir, merged_path.stem, lesson_paths, tmp_path)
         else:
             # Mixed dimensions — re-encode with padding to the largest bounding box.
+            # Round up to even numbers: libx264 requires even width and height.
             target_w = max(d[0] for d in dims)
             target_h = max(d[1] for d in dims)
+            target_w += target_w % 2
+            target_h += target_h % 2
             print(
                 f"  Mixed dimensions detected; re-encoding to {target_w}x{target_h}...",
                 file=sys.stderr,
