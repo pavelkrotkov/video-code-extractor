@@ -459,11 +459,17 @@ def main():
 
     # 4. Optionally merge all lessons into one file
     merged_path = None
-    # Compare against lesson_links (not outputs) so lessons that had no m3u8 also count as missing
-    partial = len(downloaded) < len(lesson_links)
+    no_video = len(lesson_links) - len(outputs)
+    if no_video:
+        print(
+            f"Note: {no_video}/{len(lesson_links)} lesson page(s) had no video stream.",
+            file=sys.stderr,
+        )
+    # A partial run is when we failed to download some lessons that *did* have a video stream.
+    partial = len(downloaded) < len(outputs)
     if not args.no_merge and partial:
         print(
-            f"Warning: only {len(downloaded)}/{len(lesson_links)} lessons downloaded; "
+            f"Warning: only {len(downloaded)}/{len(outputs)} video lessons downloaded; "
             "skipping merge to avoid an incomplete combined file. "
             "Re-run with --no-merge to suppress this check.",
             file=sys.stderr,
