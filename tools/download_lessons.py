@@ -136,12 +136,38 @@ def download_with_progress(m3u8_url, out_path, idx, total, slug, hdrs):
         raise subprocess.CalledProcessError(proc.returncode, "ffmpeg")
 
 
-def merge_lessons(raw_dir, lesson_paths, merged_path):
-    """Concatenate lesson MP4s into a single file, then remove the individual files."""
-    concat_file = raw_dir / f"concat_{merged_path.stem}.txt"
-    # Write to a temp path and rename on success so a prior run's merged file is never
-    # touched if ffmpeg fails partway through.
-    tmp_path = merged_path.with_suffix(".tmp.mp4")
+def get_video_dimensions(path):
+    """Return (width, height) of the first video stream, or None on any error."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        parts = r.stdout.strip().split(",")
+        if len(parts) != 2:
+            return None
+        w, h = parts
+        return int(w.strip()), int(h.strip())
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        return None
+
+
+def _concat_copy(raw_dir, slug, lesson_paths, out_path):
+    """Stream-copy via the ffmpeg concat demuxer (lossless, fast)."""
+    concat_file = raw_dir / f"concat_{slug}.txt"
     lines = []
     for p in lesson_paths:
         # as_posix() avoids Windows backslash issues; escape single quotes for ffmpeg's parser
@@ -161,18 +187,163 @@ def merge_lessons(raw_dir, lesson_paths, merged_path):
                 str(concat_file),
                 "-c",
                 "copy",
-                str(tmp_path),
+                str(out_path),
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
         )
+    finally:
+        concat_file.unlink(missing_ok=True)
+
+
+def _has_audio(path):
+    """Return True if the file has at least one audio stream."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return bool(r.stdout.strip())
+    except (subprocess.CalledProcessError, OSError):
+        return False
+
+
+def _concat_recode(lesson_paths, out_path, target_w, target_h):
+    """Re-encode all lessons, padding each to target_w x target_h, then concatenate."""
+    if not lesson_paths:
+        raise ValueError("lesson_paths cannot be empty")
+    n = len(lesson_paths)
+    inputs = []
+    for p in lesson_paths:
+        inputs += ["-i", str(p)]
+
+    has_audio_list = [_has_audio(p) for p in lesson_paths]
+    any_audio = any(has_audio_list)
+
+    # Scale each clip to fit within the target box (preserving aspect ratio), pad with
+    # black to fill exactly target_w x target_h, normalize SAR to 1:1, and reset
+    # timestamps so the concat filter receives streams that all start at pts=0.
+    filter_parts = []
+    for i in range(n):
+        filter_parts.append(
+            f"[{i}:v]setpts=PTS-STARTPTS,"
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease:reset_sar=1,"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]"
+        )
+
+    if any_audio:
+        # Build per-clip audio labels. Real audio is timestamp-normalized and format-
+        # normalized (aformat) so all streams share the same sample rate and channel
+        # layout before reaching the concat filter. Silent clips get a bounded anullsrc
+        # (duration set to the clip's video duration) so the concat filter never waits
+        # on an infinite stream before advancing to the next segment.
+        concat_inputs = ""
+        for i in range(n):
+            if has_audio_list[i]:
+                filter_parts.append(
+                    f"[{i}:a]asetpts=PTS-STARTPTS,"
+                    f"aformat=sample_rates=44100:channel_layouts=stereo[a{i}]"
+                )
+            else:
+                dur = get_duration(lesson_paths[i])
+                if dur is None:
+                    raise OSError(
+                        f"could not determine duration for silent lesson: {lesson_paths[i]}"
+                    )
+                filter_parts.append(
+                    f"anullsrc=channel_layout=stereo:sample_rate=44100:duration={dur}[a{i}]"
+                )
+            concat_inputs += f"[v{i}][a{i}]"
+        filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[vout][aout]")
+    else:
+        concat_inputs = "".join(f"[v{i}]" for i in range(n))
+        filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[vout]")
+
+    map_args = ["-map", "[vout]"]
+    if any_audio:
+        map_args += ["-map", "[aout]"]
+
+    codec_args = ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+    if any_audio:
+        codec_args += ["-c:a", "aac"]
+    codec_args += ["-movflags", "+faststart"]
+
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                *inputs,
+                "-filter_complex",
+                ";".join(filter_parts),
+                *map_args,
+                *codec_args,
+                str(out_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"ffmpeg recode failed:\n{e.stderr}", file=sys.stderr)
+        raise
+
+
+def merge_lessons(raw_dir, lesson_paths, merged_path):
+    """Merge lessons into a single file, re-encoding only if dimensions differ."""
+    if not lesson_paths:
+        raise ValueError("lesson_paths cannot be empty")
+    dims = [d for d in (get_video_dimensions(p) for p in lesson_paths) if d is not None]
+    if not dims:
+        raise OSError("could not determine video dimensions for any lesson; cannot merge")
+    if len(dims) < len(lesson_paths):
+        n_failed = len(lesson_paths) - len(dims)
+        raise OSError(
+            f"could not probe dimensions for {n_failed} lesson(s); "
+            "cannot safely decide whether to stream-copy or re-encode"
+        )
+
+    # Write to a temp path and rename on success so a prior run's merged file is never
+    # touched if ffmpeg fails partway through.
+    tmp_path = merged_path.with_suffix(".tmp.mp4")
+    try:
+        if len(set(dims)) <= 1:
+            # All videos share the same dimensions — stream copy is safe.
+            _concat_copy(raw_dir, merged_path.stem, lesson_paths, tmp_path)
+        else:
+            # Mixed dimensions — re-encode with padding to the largest bounding box.
+            # Round up to even numbers: libx264 requires even width and height.
+            target_w = max(d[0] for d in dims)
+            target_h = max(d[1] for d in dims)
+            if target_w <= 0 or target_h <= 0:
+                raise OSError(f"invalid target dimensions: {target_w}x{target_h}")
+            target_w += target_w % 2
+            target_h += target_h % 2
+            print(
+                f"  Mixed dimensions detected; re-encoding to {target_w}x{target_h}...",
+                file=sys.stderr,
+            )
+            _concat_recode(lesson_paths, tmp_path, target_w, target_h)
+
         if not tmp_path.exists() or tmp_path.stat().st_size == 0:
             raise OSError("merged file is empty or missing")
         tmp_path.rename(merged_path)
     finally:
-        concat_file.unlink(missing_ok=True)
-        tmp_path.unlink(missing_ok=True)  # no-op once rename succeeds
+        tmp_path.unlink(missing_ok=True)
 
     # Delete sources separately: a failure here doesn't invalidate the merged file,
     # so warn per file rather than treating it as a merge failure.
