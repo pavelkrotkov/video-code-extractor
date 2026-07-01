@@ -41,8 +41,7 @@ Local Apple Vision OCR on macOS, with no remote calls:
 ```bash
 uv run vce extract LESSON.mp4 \
   --backend macos-vision \
-  --no-escalate \
-  --out build/
+  --no-escalate
 ```
 
 On macOS, the default backend is `macos-vision`. If `OPENAI_API_KEY` is present, low-confidence
@@ -50,29 +49,41 @@ local extractions are automatically retried with the remote vision backend:
 
 ```bash
 export OPENAI_API_KEY=...
-uv run vce extract LESSON.mp4 --out build/
+uv run vce extract LESSON.mp4
 ```
 
 On non-macOS systems, use the remote backend for the whole run:
 
 ```bash
 export OPENAI_API_KEY=...
-uv run vce extract LESSON.mp4 \
-  --backend vision-gpt4v \
-  --out build/
+uv run vce extract LESSON.mp4 --backend vision-gpt4v
 ```
 
 Remote extraction uses the OpenAI API and may incur usage charges. The key is read only from the
 environment; there is deliberately no command-line key option.
 
-For `LESSON.mp4`, the command writes:
+Output lands in `out/` by default (gitignored). For `LESSON.mp4`:
 
 ```text
-build/
+out/
 ├── LESSON.py                  # merged, best-effort code
 ├── LESSON.provenance.json     # extraction-level audit records
 ├── LESSON_frames/             # sampled and scene-change frames
 └── LESSON_crops/              # present when --crop is used
+```
+
+The command prints a `[1/5] … [5/5]` stage header with a tqdm progress bar for each stage, then
+a stats block:
+
+```
+  Frames extracted:         120
+  After dedup:               87  (27% removed)
+  Passed scoring gate:       54  (62%)
+  Escalated:                  8
+  Snippets merged:           21
+  Output:  out/LESSON.py
+    lines: 312   chars: 9847
+  Time: 1m 43s
 ```
 
 See every supported option with:
@@ -85,6 +96,7 @@ The most useful options are:
 
 | Option | Meaning |
 | --- | --- |
+| `--out DIR` | Output directory; default `out/` |
 | `--fps FLOAT` | Regular frame sampling rate; default `1.0` |
 | `--scene-threshold FLOAT` | ffmpeg scene-change sensitivity; default `0.3` |
 | `--crop X,Y,W,H` | Fixed pixel region sent to the extraction backend |
@@ -180,9 +192,34 @@ to fetch DeepLearning.AI lessons during development:
 uv run tools/download_lessons.py <COURSE_URL>
 ```
 
-It is not part of the extraction pipeline. The course URL is a required argument, authentication must be
-configured in the script from a valid browser session, downloads are written to the current
-directory, and `ffmpeg` is required. Downloaded `*.mp4` files are git-ignored.
+It is not part of the extraction pipeline. `ffmpeg` is required. Authentication must be configured
+in the script from a valid browser session.
+
+**What it does:**
+
+1. Scrapes the course page for lesson URLs and extracts the HLS `.m3u8` stream from each.
+2. Stream-copies each lesson to `raw/lesson_NN_<slug>.mp4` (gitignored), printing a live ffmpeg
+   progress line per lesson.
+3. After all downloads complete, merges the lessons into a single `raw/<course-slug>.mp4`:
+   - If all lessons share the same video dimensions, the merge is a lossless stream-copy
+     (concat demuxer, no re-encode).
+   - If dimensions differ (e.g. landscape intro + square-framed body lessons), the script
+     re-encodes every clip with `scale`+`pad` to the largest bounding box and concatenates
+     with the `libx264`/`aac` codec pair.
+4. Prints a final stats line: number of lessons, total size, and duration of the merged file.
+
+Pass `--no-merge` to keep individual lesson files and skip the merge step.
+
+The merge is skipped automatically when any lesson failed to download, or when any lesson page
+had no extractable video stream (the script cannot tell whether such a page is genuinely
+text-only or a video lesson whose m3u8 extraction failed). Once you have inspected the
+per-lesson warnings and confirmed the missing-stream pages are text-only, re-run with
+`--force-merge` to allow the merge to proceed.
+
+```
+Downloaded 12 lesson(s) (1.4 GB total)
+Merged: raw/build-and-train-an-llm-with-jax.mp4 (1.4 GB, 2h 7m)
+```
 
 ## Develop
 
