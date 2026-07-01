@@ -365,6 +365,14 @@ def main():
         action="store_true",
         help="keep individual lesson files instead of merging into one",
     )
+    parser.add_argument(
+        "--force-merge",
+        action="store_true",
+        help=(
+            "merge even when some lesson pages had no extractable video stream "
+            "(use after confirming those pages are intentionally text-only)"
+        ),
+    )
     args = parser.parse_args()
     course_url = args.course_url
     slug = course_slug(course_url)
@@ -461,25 +469,45 @@ def main():
     merged_path = None
     no_video = len(lesson_links) - len(outputs)
     if no_video:
-        # Stdout: this is informational, not an error. The script cannot distinguish a
-        # legitimately text-only lesson from one whose m3u8 extraction failed (e.g. due
-        # to an auth-gated page or an unmatched regex). The "WARNING: Could not find m3u8"
-        # lines printed above identify which pages were affected; the user should verify
-        # these are intentionally text-only before trusting the merged file is complete.
+        # Stdout: informational, not an error. The script cannot tell whether a page with
+        # no m3u8 is genuinely text-only or a video lesson whose extraction failed (auth-
+        # gated response, new player URL, etc.). Point the user to the per-lesson warnings
+        # printed above so they can decide before acting on the merged file.
+        suffix = (
+            "the merged file will be incomplete."
+            if not args.no_merge
+            else "some lesson videos will be missing."
+        )
         print(
             f"Note: {no_video}/{len(lesson_links)} lesson page(s) had no extractable video "
-            "stream. Check the warnings above — if any of those pages should have had a "
-            "video, the merged file will be incomplete."
+            f"stream. Check the warnings above — if any of those pages should have had a "
+            f"video, {suffix}"
         )
-    # A partial run is when we failed to download some lessons that *did* have a video stream.
-    partial = len(downloaded) < len(outputs)
+
+    # Two independent reasons to skip auto-merge:
+    # 1. Some video downloads failed outright.
+    # 2. Some lesson pages had no m3u8 and we cannot confirm they are text-only; merging
+    #    would delete the per-lesson files and leave an incomplete combined file. Pass
+    #    --force-merge once you have verified those pages are intentionally text-only.
+    failed_downloads = len(downloaded) < len(outputs)
+    unsafe_missing = no_video > 0 and not args.force_merge
+    partial = failed_downloads or unsafe_missing
+
     if not args.no_merge and partial:
-        print(
-            f"Warning: only {len(downloaded)}/{len(outputs)} video lessons downloaded; "
-            "skipping merge to avoid an incomplete combined file. "
-            "Re-run with --no-merge to suppress this check.",
-            file=sys.stderr,
-        )
+        if unsafe_missing:
+            print(
+                f"Warning: skipping auto-merge — {no_video} lesson page(s) had no "
+                "extractable video stream and may be video lessons where extraction "
+                "failed. Re-run with --force-merge once you have confirmed those "
+                "pages are text-only.",
+                file=sys.stderr,
+            )
+        if failed_downloads:
+            print(
+                f"Warning: only {len(downloaded)}/{len(outputs)} video lessons downloaded; "
+                "skipping merge to avoid an incomplete combined file.",
+                file=sys.stderr,
+            )
     if not args.no_merge and not partial:
         merged_path = raw_dir / f"{slug}.mp4"
         print(f"Merging {len(downloaded)} lesson(s) -> {merged_path}")

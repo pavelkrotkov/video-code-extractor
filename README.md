@@ -208,8 +208,13 @@ in the script from a valid browser session.
      with the `libx264`/`aac` codec pair.
 4. Prints a final stats line: number of lessons, total size, and duration of the merged file.
 
-Pass `--no-merge` to keep individual lesson files and skip the merge step. The merge is also
-skipped automatically if any lesson failed to download, to avoid producing an incomplete file.
+Pass `--no-merge` to keep individual lesson files and skip the merge step.
+
+The merge is skipped automatically when any lesson failed to download, or when any lesson page
+had no extractable video stream (the script cannot tell whether such a page is genuinely
+text-only or a video lesson whose m3u8 extraction failed). Once you have inspected the
+per-lesson warnings and confirmed the missing-stream pages are text-only, re-run with
+`--force-merge` to allow the merge to proceed.
 
 ```
 Downloaded 12 lesson(s) (1.4 GB total)
