@@ -241,7 +241,7 @@ def _concat_recode(lesson_paths, out_path, target_w, target_h):
     for i in range(n):
         filter_parts.append(
             f"[{i}:v]setpts=PTS-STARTPTS,"
-            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease:reset_sar=1,"
             f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]"
         )
 
