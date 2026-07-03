@@ -15,7 +15,7 @@ import pytest
 from PIL import Image
 
 from vce import pipeline as pipeline_mod
-from vce.pipeline import Pipeline, PipelineConfig, _build_script
+from vce.pipeline import Pipeline, PipelineConfig, build_script
 from vce.types import BBox, Extraction, Frame, MergedSnippet
 
 CODE = "def foo():\n    return 1"
@@ -217,12 +217,12 @@ def test_build_script_joins_and_skips_empty():
         MergedSnippet(code="   "),  # whitespace-only: skipped
         MergedSnippet(code="print(os.getcwd())"),
     ]
-    assert _build_script(snippets) == "import os\n\n\nprint(os.getcwd())\n"
+    assert build_script(snippets) == "import os\n\n\nprint(os.getcwd())\n"
 
 
 def test_build_script_empty_is_empty():
-    assert _build_script([]) == ""
-    assert _build_script([MergedSnippet(code="\n  \n")]) == ""
+    assert build_script([]) == ""
+    assert build_script([MergedSnippet(code="\n  \n")]) == ""
 
 
 @pytest.mark.parametrize(
