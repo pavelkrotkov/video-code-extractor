@@ -360,6 +360,10 @@ def _run_ocr_fetch(args: argparse.Namespace) -> int:
     from openai import OpenAIError
 
     api_key = _require_api_key()
+    # Same validation (and message) as PipelineConfig gives `extract`; checked before any
+    # network work so a bad threshold can't silently gate everything out (or nothing).
+    if not 0.0 <= args.score_threshold <= 1.0:
+        raise CLIError(f"score_threshold must be within [0, 1], got {args.score_threshold}")
     try:
         with _clean_errors():
             batch_id, _, video, requests = batch_ocr.read_manifest(args.manifest)

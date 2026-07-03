@@ -47,8 +47,9 @@ STATUS_NO_CODE = "no_code_visible"
 STATUS_UNCERTAIN = "uncertain"
 STATUS_ERROR = "error"
 
-# The Batch API rejects input files larger than 200 MB.
+# The Batch API rejects input files larger than 200 MB or with more than 50,000 requests.
 MAX_BATCH_INPUT_BYTES = 200 * 1024 * 1024
+MAX_BATCH_REQUESTS = 50_000
 
 # The Batch API requires custom_id to be a unique string of at most 64 characters.
 _CUSTOM_ID_MAX = 64
@@ -135,7 +136,16 @@ def request_line(request: OCRRequest, model: str) -> dict[str, Any]:
 
 
 def write_batch_input(path: Path, requests: list[OCRRequest], model: str) -> None:
-    """Write the batch-input JSONL (one request line per screenshot) to ``path``."""
+    """Write the batch-input JSONL (one request line per screenshot) to ``path``.
+
+    Rejects more than :data:`MAX_BATCH_REQUESTS` requests up front — before any image is
+    base64-encoded or uploaded — since the Batch API caps one batch at 50,000 requests.
+    """
+    if len(requests) > MAX_BATCH_REQUESTS:
+        raise ValueError(
+            f"{len(requests)} requests exceed the Batch API's {MAX_BATCH_REQUESTS:,} "
+            "requests-per-batch limit; reduce --fps or split the video into shorter segments"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         for request in requests:
@@ -320,6 +330,7 @@ __all__ = [
     "BATCH_ENDPOINT",
     "COMPLETION_WINDOW",
     "MAX_BATCH_INPUT_BYTES",
+    "MAX_BATCH_REQUESTS",
     "MAX_OUTPUT_TOKENS",
     "NO_CODE_SENTINEL",
     "OCR_PROMPT",

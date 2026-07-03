@@ -549,3 +549,12 @@ def test_ocr_fetch_merge_gates_non_code_records(monkeypatch, capsys, batch_env):
     script = (batch_env / "lesson01.py").read_text()
     assert "import os" in script
     assert "Welcome to the course" not in script
+
+
+@pytest.mark.parametrize("bad", ["4", "-1"])
+def test_ocr_fetch_rejects_out_of_range_score_threshold(monkeypatch, capsys, batch_env, bad):
+    _install_fake_client(monkeypatch, _FakeOCRClient())
+    manifest = _manifest_with_one_request(batch_env)
+
+    assert cli.main(["ocr-fetch", str(manifest), "--merge", "--score-threshold", bad]) == 1
+    assert "score_threshold must be within [0, 1]" in capsys.readouterr().err

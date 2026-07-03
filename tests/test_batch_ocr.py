@@ -444,3 +444,10 @@ def test_parse_failed_response_body_is_error():
     (record,) = parse_batch_output(line, [_request()])
     assert record["status"] == "error"
     assert "invalid image" in record["detail"]
+
+
+def test_write_batch_input_rejects_too_many_requests(tmp_path, monkeypatch, png):
+    monkeypatch.setattr(batch_ocr, "MAX_BATCH_REQUESTS", 1)
+    requests = [_request("a_000000_000", image=str(png)), _request("b_000001_001", image=str(png))]
+    with pytest.raises(ValueError, match="requests-per-batch limit"):
+        write_batch_input(tmp_path / "batch_input.jsonl", requests, "gpt-5.4-mini")
