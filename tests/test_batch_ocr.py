@@ -406,3 +406,41 @@ def test_write_records_is_jsonl(tmp_path):
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["text"] == "x = 1"
+
+
+# --- round-1 review fixes --------------------------------------------------------------------
+
+
+def test_build_requests_stores_absolute_paths(tmp_path, monkeypatch):
+    # The manifest is replayed by ocr-fetch from a possibly different cwd; relative frame paths
+    # would break provenance, so build_requests must resolve them.
+    monkeypatch.chdir(tmp_path)
+    frames = [(Frame(path=Path("rel/a.jpg"), timestamp_ms=0), Path("rel/a_crop.jpg"))]
+    (request,) = build_requests(Path("lesson01.mp4"), frames)
+    assert Path(request.frame_path).is_absolute()
+    assert Path(request.image_path).is_absolute()
+    assert request.frame_path == str(tmp_path / "rel/a.jpg")
+
+
+def test_submit_batch_rejects_oversized_input(tmp_path, monkeypatch):
+    monkeypatch.setattr(batch_ocr, "MAX_BATCH_INPUT_BYTES", 10)
+    path = tmp_path / "batch_input.jsonl"
+    path.write_text("x" * 11, encoding="utf-8")
+    with pytest.raises(ValueError, match="exceeds the Batch API"):
+        submit_batch(FakeBatchClient(), path)
+
+
+def test_parse_failed_response_body_is_error():
+    line = json.dumps(
+        {
+            "custom_id": "lesson01_000314_000",
+            "response": {
+                "status_code": 200,
+                "body": {"status": "failed", "error": {"message": "invalid image"}, "output": []},
+            },
+            "error": None,
+        }
+    )
+    (record,) = parse_batch_output(line, [_request()])
+    assert record["status"] == "error"
+    assert "invalid image" in record["detail"]

@@ -47,6 +47,9 @@ STATUS_NO_CODE = "no_code_visible"
 STATUS_UNCERTAIN = "uncertain"
 STATUS_ERROR = "error"
 
+# The Batch API rejects input files larger than 200 MB.
+MAX_BATCH_INPUT_BYTES = 200 * 1024 * 1024
+
 # The Batch API requires custom_id to be a unique string of at most 64 characters.
 _CUSTOM_ID_MAX = 64
 _UNSAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
@@ -87,15 +90,20 @@ def make_custom_id(video_stem: str, timestamp_ms: int, seq: int) -> str:
 
 
 def build_requests(video: Path, images: list[tuple[Frame, Path]]) -> list[OCRRequest]:
-    """One :class:`OCRRequest` per ``(frame, image)`` pair, with sequential stable ids."""
+    """One :class:`OCRRequest` per ``(frame, image)`` pair, with sequential stable ids.
+
+    Paths are stored absolute: the manifest is replayed by ``ocr-fetch`` hours later, possibly
+    from a different working directory, and relative paths would then point provenance at
+    screenshots that don't exist there.
+    """
     stem = video.stem or "video"
     return [
         OCRRequest(
             custom_id=make_custom_id(stem, frame.timestamp_ms, seq),
             video=video.name,
             timestamp_ms=frame.timestamp_ms,
-            frame_path=str(frame.path),
-            image_path=str(image),
+            frame_path=str(Path(frame.path).resolve()),
+            image_path=str(Path(image).resolve()),
         )
         for seq, (frame, image) in enumerate(images)
     ]
@@ -142,7 +150,18 @@ def make_client(api_key: str | None = None) -> Any:
 
 
 def submit_batch(client: Any, jsonl_path: Path, *, description: str = "code screenshot OCR") -> str:
-    """Upload ``jsonl_path`` and create the batch; return the batch id to poll later."""
+    """Upload ``jsonl_path`` and create the batch; return the batch id to poll later.
+
+    Fails fast with a clear :class:`ValueError` when the input file exceeds the Batch API's
+    size cap, instead of uploading a file the API would reject.
+    """
+    size = jsonl_path.stat().st_size
+    if size > MAX_BATCH_INPUT_BYTES:
+        raise ValueError(
+            f"batch input {jsonl_path} is {size / 1e6:.0f} MB, exceeds the Batch API's "
+            f"{MAX_BATCH_INPUT_BYTES // (1024 * 1024)} MB limit; reduce --fps, use --crop, "
+            "or split the video into shorter segments"
+        )
     with jsonl_path.open("rb") as fh:
         uploaded = client.files.create(file=fh, purpose="batch")
     batch = client.batches.create(
@@ -200,6 +219,11 @@ def _classify_line(obj: dict[str, Any]) -> tuple[str, str, str]:
     if status_code != 200:
         return STATUS_ERROR, "", f"HTTP {status_code}"
     body = response.get("body") or {}
+    # A Responses body can itself report a failure (e.g. an image or content-policy error)
+    # under HTTP 200; surface the real failure instead of misreading it as empty output.
+    if body.get("status") == "failed":
+        failure = body.get("error") or {}
+        return STATUS_ERROR, "", f"response failed: {failure.get('message') or failure}"
     text = strip_fence(_response_text(body))
     if text.strip() == NO_CODE_SENTINEL:
         return STATUS_NO_CODE, "", ""
@@ -295,6 +319,7 @@ __all__ = [
     "BACKEND_NAME",
     "BATCH_ENDPOINT",
     "COMPLETION_WINDOW",
+    "MAX_BATCH_INPUT_BYTES",
     "MAX_OUTPUT_TOKENS",
     "NO_CODE_SENTINEL",
     "OCR_PROMPT",

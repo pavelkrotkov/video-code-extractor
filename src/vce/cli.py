@@ -37,6 +37,7 @@ from vce.frames import FFmpegNotFoundError, FrameExtractionError
 from vce.merge import build_provenance, merge_results, write_provenance
 from vce.ocr import DEFAULT_OCR_MODEL, resolve_ocr_model
 from vce.pipeline import Pipeline, PipelineConfig, build_script, candidate_frames
+from vce.scoring import score_code_likeness
 from vce.types import BBox
 
 MACOS_VISION = "macos-vision"
@@ -147,6 +148,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--merge",
         action="store_true",
         help="also merge the OCR records into a script + provenance sidecar",
+    )
+    fetch.add_argument(
+        "--score-threshold",
+        type=float,
+        default=0.4,
+        help="with --merge, drop records scoring below this code-likeness (0..1, default 0.4)",
     )
 
     # The OpenAI key is read only from $OPENAI_API_KEY — deliberately not a CLI flag, since secrets
@@ -361,19 +368,39 @@ def _run_ocr_fetch(args: argparse.Namespace) -> int:
 
             client = batch_ocr.make_client(api_key)
             batch = client.batches.retrieve(batch_id)
-            if batch.status != "completed":
+            output_file_id = getattr(batch, "output_file_id", None)
+            error_file_id = getattr(batch, "error_file_id", None)
+            if batch.status in ("expired", "cancelled"):
+                # Terminal, but OpenAI still exposes the finished requests via the output file
+                # (and the unfinished ones via the error file) — fetch the partial results;
+                # requests with no result line become clean error records.
+                if not output_file_id and not error_file_id:
+                    raise CLIError(
+                        f"batch {batch_id} {batch.status} with no results to fetch; "
+                        "submit a new batch with vce ocr-submit"
+                    )
+                print(
+                    f"vce: batch {batch_id} {batch.status}; fetching partial results",
+                    file=sys.stderr,
+                )
+            elif batch.status == "failed":
+                raise CLIError(
+                    f"batch {batch_id} failed and will never produce results; "
+                    "submit a new batch with vce ocr-submit"
+                )
+            elif batch.status != "completed":
                 raise CLIError(
                     f"batch {batch_id} is not complete: status={batch.status}; retry later "
                     f"(check with: vce ocr-status {args.manifest})"
                 )
 
             # Keep the raw batch output (and error file, when present) verbatim for debugging.
-            raw = client.files.content(batch.output_file_id).text if batch.output_file_id else ""
+            raw = client.files.content(output_file_id).text if output_file_id else ""
             raw_path = out_dir / f"{base}.batch_output.jsonl"
             raw_path.write_text(raw, encoding="utf-8")
             error_raw = ""
-            if getattr(batch, "error_file_id", None):
-                error_raw = client.files.content(batch.error_file_id).text
+            if error_file_id:
+                error_raw = client.files.content(error_file_id).text
                 (out_dir / f"{base}.batch_errors.jsonl").write_text(error_raw, encoding="utf-8")
 
             records = batch_ocr.parse_batch_output(raw, requests, error_raw=error_raw)
@@ -390,13 +417,21 @@ def _run_ocr_fetch(args: argparse.Namespace) -> int:
         batch_ocr.STATUS_ERROR,
     )
     summary = ", ".join(f"{counts.get(status, 0)} {status}" for status in statuses)
-    print(f"Batch {batch_id} complete: {summary}")
+    print(f"Batch {batch_id} {batch.status}: {summary}")
     print(f"  OCR records: {records_path}")
     print(f"  Raw output:  {raw_path}")
 
     if args.merge:
         with _clean_errors():
-            results = merge_results(batch_ocr.records_to_extractions(records))
+            # Apply the same code-likeness gate as the interactive pipeline: without it, prose
+            # the model emits for a non-code slide (instead of the exact sentinel) would become
+            # a script snippet.
+            extractions = [
+                ext
+                for ext in batch_ocr.records_to_extractions(records)
+                if score_code_likeness(ext.frame, ext.text).score >= args.score_threshold
+            ]
+            results = merge_results(extractions)
             snippets = [r.snippet for r in results]
             script_path = out_dir / f"{base}.py"
             script_path.write_text(build_script(snippets), encoding="utf-8")

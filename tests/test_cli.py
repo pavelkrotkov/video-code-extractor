@@ -465,3 +465,87 @@ def test_ocr_fetch_merge_writes_script_and_provenance(monkeypatch, capsys, batch
     assert (batch_env / "lesson01.py").read_text() == "import os\nprint(os.getcwd())\n"
     provenance = json.loads((batch_env / "lesson01.provenance.json").read_text())
     assert provenance[0]["raw_ocr"] == "import os\nprint(os.getcwd())"
+
+
+def _manifest_with_one_request(batch_env):
+    from vce import batch_ocr
+    from vce.batch_ocr import OCRRequest
+
+    manifest = batch_env / "lesson01.batch.json"
+    batch_ocr.write_manifest(
+        manifest,
+        batch_id="batch_abc123",
+        model="m",
+        video="lesson01.mp4",
+        requests=[OCRRequest("lesson01_000000_000", "lesson01.mp4", 0, "f0.png", "f0.png")],
+    )
+    return manifest
+
+
+def test_ocr_fetch_failed_batch_is_terminal_error(monkeypatch, capsys, batch_env):
+    _install_fake_client(monkeypatch, _FakeOCRClient(status="failed"))
+    manifest = _manifest_with_one_request(batch_env)
+
+    assert cli.main(["ocr-fetch", str(manifest)]) == 1
+    err = capsys.readouterr().err
+    assert "will never produce results" in err
+    assert "retry later" not in err
+
+
+def test_ocr_fetch_expired_batch_fetches_partial_results(monkeypatch, capsys, batch_env):
+    import json
+
+    raw = _ocr_output_line("lesson01_000000_000", "x = 1")
+    _install_fake_client(monkeypatch, _FakeOCRClient(status="expired", output_text=raw))
+    manifest = _manifest_with_one_request(batch_env)
+
+    assert cli.main(["ocr-fetch", str(manifest)]) == 0
+    captured = capsys.readouterr()
+    assert "fetching partial results" in captured.err
+    records = [
+        json.loads(line) for line in (batch_env / "lesson01.ocr.jsonl").read_text().splitlines()
+    ]
+    assert records[0]["status"] == "ok"
+
+
+def test_ocr_fetch_expired_batch_without_results_is_error(monkeypatch, capsys, batch_env):
+    _install_fake_client(
+        monkeypatch, _FakeOCRClient(status="expired", output_text=None, error_text=None)
+    )
+    manifest = _manifest_with_one_request(batch_env)
+
+    assert cli.main(["ocr-fetch", str(manifest)]) == 1
+    assert "no results to fetch" in capsys.readouterr().err
+
+
+def test_ocr_fetch_merge_gates_non_code_records(monkeypatch, capsys, batch_env):
+    # Prose the model emits for a non-code slide (instead of the exact sentinel) must not
+    # become a script snippet: --merge applies the pipeline's code-likeness gate.
+    prose = "Welcome to the course! Today we will learn about machine learning together."
+    raw = "\n".join(
+        [
+            _ocr_output_line("lesson01_000000_000", "import os\nprint(os.getcwd())"),
+            _ocr_output_line("lesson01_000001_001", prose),
+        ]
+    )
+    _install_fake_client(monkeypatch, _FakeOCRClient(output_text=raw))
+
+    from vce import batch_ocr
+    from vce.batch_ocr import OCRRequest
+
+    manifest = batch_env / "lesson01.batch.json"
+    batch_ocr.write_manifest(
+        manifest,
+        batch_id="batch_abc123",
+        model="m",
+        video="lesson01.mp4",
+        requests=[
+            OCRRequest("lesson01_000000_000", "lesson01.mp4", 0, "f0.png", "f0.png"),
+            OCRRequest("lesson01_000001_001", "lesson01.mp4", 1000, "f1.png", "f1.png"),
+        ],
+    )
+
+    assert cli.main(["ocr-fetch", str(manifest), "--merge"]) == 0
+    script = (batch_env / "lesson01.py").read_text()
+    assert "import os" in script
+    assert "Welcome to the course" not in script
