@@ -114,7 +114,7 @@ def _artifact_base(video: Path) -> str:
     return video.stem or "extracted"
 
 
-def _candidate_frames(video: Path, config: PipelineConfig) -> list[Frame]:
+def candidate_frames(video: Path, config: PipelineConfig) -> list[Frame]:
     """fps-sampled and scene-cut frames, merged into one timeline-ordered list.
 
     The two sources are complementary (see :mod:`vce.frames`); a frame captured by both at the
@@ -134,7 +134,7 @@ def _candidate_frames(video: Path, config: PipelineConfig) -> list[Frame]:
     return combined
 
 
-def _build_script(snippets: list[MergedSnippet]) -> str:
+def build_script(snippets: list[MergedSnippet]) -> str:
     """Concatenate snippet code into one clean script, blank-line separated, trailing newline.
 
     Empty snippets are skipped; an all-empty run yields an empty string (no stray blank lines).
@@ -190,7 +190,7 @@ class Pipeline:
         # Stage 1/5: Frame extraction
         print("[1/5] Extracting frames...", file=sys.stderr)
         t0 = time.perf_counter()
-        frames = _candidate_frames(video, config)
+        frames = candidate_frames(video, config)
         t_frames = time.perf_counter() - t0
 
         # Stage 2/5: Deduplication
@@ -256,7 +256,7 @@ class Pipeline:
 
         script_path = config.out_dir / f"{base}.py"
         provenance_path = config.out_dir / f"{base}.provenance.json"
-        script_text = _build_script(snippets)
+        script_text = build_script(snippets)
         script_path.write_text(script_text, encoding="utf-8")
         write_provenance(provenance_path, build_provenance(results))
 

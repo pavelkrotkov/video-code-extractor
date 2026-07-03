@@ -1,4 +1,10 @@
-"""Vision-LLM extraction backend (OpenAI GPT-4V) — the accuracy option.
+"""Legacy synchronous vision-LLM extraction backend (kept for the interactive escalation tier).
+
+.. deprecated::
+    Bulk OCR now goes through the OpenAI Batch API — see :mod:`vce.batch_ocr` and the
+    ``vce ocr-submit`` / ``vce ocr-fetch`` commands (issue #32). This synchronous per-frame
+    path remains only for the two-tier ``vce extract`` pipeline, where the escalation tier
+    must answer within the run and cannot wait on a batch's completion window.
 
 The #1 correctness risk with vision LLMs is hallucination: they "autocomplete" plausible but
 invisible code. The mitigation lives in :data:`OCR_SYSTEM_PROMPT`, which forbids inference and
@@ -8,12 +14,10 @@ the response→:class:`~vce.types.Extraction` mapping is unit-testable without a
 
 from __future__ import annotations
 
-import base64
-import mimetypes
-import re
 from pathlib import Path
 from typing import Any, Protocol
 
+from vce.ocr import image_data_uri, resolve_ocr_model, strip_fence, text_confidence
 from vce.types import Extraction, Frame
 
 OCR_SYSTEM_PROMPT = (
@@ -24,55 +28,29 @@ OCR_SYSTEM_PROMPT = (
     "no commentary."
 )
 
-# Closing fence must be at the start of a line (MULTILINE ``^```) so triple-backticks *inside*
-# the code (e.g. a Markdown string in a tutorial) aren't mistaken for the close. The optional
-# ``\Z`` means a truncated response missing its closing fence still yields the code.
-_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)(?:^```|\Z)", re.DOTALL | re.MULTILINE)
-
-# OpenAI rejects images larger than 20 MB; fail fast with a clear message before the API call.
-_MAX_IMAGE_BYTES = 20 * 1024 * 1024
-
 
 class _ChatClient(Protocol):
     chat: Any
 
 
-def _strip_fence(content: str) -> str:
-    """Return the contents of the first fenced code block, or the trimmed text if unfenced.
-
-    Strips leading/trailing newlines (not spaces) so an extra blank line after the opening fence
-    is removed while the first code line keeps its indentation.
-    """
-    match = _FENCE_RE.search(content)
-    if match:
-        return match.group(1).strip("\n")
-    # Unfenced fallback: strip only surrounding newlines so the first line keeps its indentation.
-    return content.strip("\n")
-
-
-def _confidence(text: str) -> float:
-    """Heuristic confidence: start high, penalize each ambiguous ``[?]`` marker the model emits.
-
-    Empty or whitespace-only output means a failed/blank transcription, so confidence is low.
-    """
-    if not text.strip():
-        return 0.1
-    return max(0.1, 0.9 - 0.1 * text.count("[?]"))
-
-
 class VisionLLMBackend:
-    """:class:`~vce.backends.base.ExtractionBackend` backed by an OpenAI vision model."""
+    """:class:`~vce.backends.base.ExtractionBackend` backed by an OpenAI vision model.
+
+    The model defaults to :func:`vce.ocr.resolve_ocr_model` — ``gpt-5.4-mini`` unless
+    ``$OPENAI_OCR_MODEL`` or the ``model`` argument overrides it — so the escalation tier and
+    the batch flow use the same model by default.
+    """
 
     name = "vision-gpt4v"
 
     def __init__(
         self,
         *,
-        model: str = "gpt-4o",
+        model: str | None = None,
         api_key: str | None = None,
         client: _ChatClient | None = None,
     ) -> None:
-        self._model = model
+        self._model = resolve_ocr_model(model)
         self._api_key = api_key
         self._client = client
 
@@ -88,14 +66,7 @@ class VisionLLMBackend:
         return self._client
 
     def _build_messages(self, image_path: Path) -> list[dict[str, Any]]:
-        size = image_path.stat().st_size
-        if size > _MAX_IMAGE_BYTES:
-            raise ValueError(
-                f"image {image_path} is {size / 1e6:.1f} MB, exceeds OpenAI's 20 MB limit"
-            )
-        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
-        b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
-        data_uri = f"data:{mime_type};base64,{b64}"
+        data_uri = image_data_uri(image_path)
         return [
             {"role": "system", "content": OCR_SYSTEM_PROMPT},
             {
@@ -118,8 +89,8 @@ class VisionLLMBackend:
             raise RuntimeError("OpenAI returned no choices for the vision request")
         choice = response.choices[0]
         content = choice.message.content or ""
-        text = _strip_fence(content)
-        confidence = _confidence(text)
+        text = strip_fence(content)
+        confidence = text_confidence(text)
         # A completion truncated at the output-token limit is partial code; cap its confidence so
         # the merge stage doesn't treat a silently-cut snippet as a reliable extraction.
         if getattr(choice, "finish_reason", None) == "length":
