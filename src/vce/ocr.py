@@ -33,11 +33,12 @@ _FENCE_RE = re.compile(r"```[^\n]*\n(.*?)(?:^```|\Z)", re.DOTALL | re.MULTILINE)
 def resolve_ocr_model(explicit: str | None = None) -> str:
     """The OCR model to use: ``explicit`` if given, else ``$OPENAI_OCR_MODEL``, else the default.
 
-    A set-but-empty environment variable counts as unset, so ``OPENAI_OCR_MODEL=`` in a shell
-    profile can't silently select an empty model name.
+    Blank strings count as unset — for the environment variable and the explicit argument
+    alike — so ``OPENAI_OCR_MODEL=`` in a shell profile or ``--model ""`` can't silently
+    select an empty or whitespace model name.
     """
-    if explicit:
-        return explicit
+    if explicit and explicit.strip():
+        return explicit.strip()
     return os.environ.get(OCR_MODEL_ENV, "").strip() or DEFAULT_OCR_MODEL
 
 

@@ -199,21 +199,28 @@ def write_manifest(
 
 def read_manifest(path: Path) -> tuple[str, str, str, list[OCRRequest]]:
     """Load a manifest written by :func:`write_manifest`; returns (batch_id, model, video, requests)."""
-    data = json.loads(path.read_text(encoding="utf-8"))
     try:
+        data = json.loads(path.read_text(encoding="utf-8"))
         requests = [OCRRequest(**entry) for entry in data["requests"]]
         return data["batch_id"], data["model"], data["video"], requests
-    except (KeyError, TypeError) as exc:
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise ValueError(f"{path} is not a valid batch manifest: {exc}") from exc
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    """``value`` if it is a dict, else ``{}`` — batch files are external input; never crash on shape."""
+    return value if isinstance(value, dict) else {}
 
 
 def _response_text(body: dict[str, Any]) -> str:
     """Concatenated ``output_text`` parts of a ``/v1/responses`` body (raw JSON shape)."""
     parts: list[str] = []
     for item in body.get("output") or []:
+        item = _as_dict(item)
         if item.get("type") != "message":
             continue
         for part in item.get("content") or []:
+            part = _as_dict(part)
             if part.get("type") == "output_text":
                 parts.append(part.get("text") or "")
     return "".join(parts)
@@ -224,21 +231,21 @@ def _classify_line(obj: dict[str, Any]) -> tuple[str, str, str]:
     error = obj.get("error")
     if error:
         return STATUS_ERROR, "", f"batch error: {error}"
-    response = obj.get("response") or {}
+    response = _as_dict(obj.get("response"))
     status_code = response.get("status_code")
     if status_code != 200:
         return STATUS_ERROR, "", f"HTTP {status_code}"
-    body = response.get("body") or {}
+    body = _as_dict(response.get("body"))
     # A Responses body can itself report a failure (e.g. an image or content-policy error)
     # under HTTP 200; surface the real failure instead of misreading it as empty output.
     if body.get("status") == "failed":
-        failure = body.get("error") or {}
+        failure = _as_dict(body.get("error"))
         return STATUS_ERROR, "", f"response failed: {failure.get('message') or failure}"
     text = strip_fence(_response_text(body))
     if text.strip() == NO_CODE_SENTINEL:
         return STATUS_NO_CODE, "", ""
     if body.get("status") == "incomplete":
-        reason = (body.get("incomplete_details") or {}).get("reason", "unknown")
+        reason = _as_dict(body.get("incomplete_details")).get("reason", "unknown")
         return STATUS_UNCERTAIN, text, f"incomplete response: {reason}"
     if not text.strip():
         return STATUS_UNCERTAIN, "", "empty model output"
@@ -265,6 +272,8 @@ def parse_batch_output(
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue  # unmatchable; the affected request is reported as missing below
+        if not isinstance(obj, dict):
+            continue  # valid JSON but not a result object; treated as missing likewise
         custom_id = obj.get("custom_id")
         if not custom_id or custom_id in by_id:
             continue

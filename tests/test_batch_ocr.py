@@ -451,3 +451,72 @@ def test_write_batch_input_rejects_too_many_requests(tmp_path, monkeypatch, png)
     requests = [_request("a_000000_000", image=str(png)), _request("b_000001_001", image=str(png))]
     with pytest.raises(ValueError, match="requests-per-batch limit"):
         write_batch_input(tmp_path / "batch_input.jsonl", requests, "gpt-5.4-mini")
+
+
+# --- round-2 review fixes (defensive parsing of external files) ------------------------------
+
+
+def test_parse_ignores_non_dict_json_lines():
+    raw = "\n".join(
+        ["42", '"a string"', "[1, 2]", "null", _output_line("lesson01_000314_000", "x = 1")]
+    )
+    (record,) = parse_batch_output(raw, [_request()])
+    assert record["status"] == "ok"
+    assert record["text"] == "x = 1"
+
+
+def test_parse_survives_non_dict_response_and_body():
+    lines = [
+        json.dumps({"custom_id": "a_000000_000", "response": "weird", "error": None}),
+        json.dumps(
+            {
+                "custom_id": "b_000001_001",
+                "response": {"status_code": 200, "body": [1]},
+                "error": None,
+            }
+        ),
+    ]
+    records = parse_batch_output(
+        "\n".join(lines), [_request("a_000000_000"), _request("b_000001_001")]
+    )
+    # non-dict response → no status_code → error; non-dict body → no text → uncertain
+    assert records[0]["status"] == "error"
+    assert records[1]["status"] == "uncertain"
+
+
+def test_parse_survives_non_dict_output_items():
+    line = json.dumps(
+        {
+            "custom_id": "lesson01_000314_000",
+            "response": {
+                "status_code": 200,
+                "body": {
+                    "status": "completed",
+                    "output": [
+                        "junk",
+                        {
+                            "type": "message",
+                            "content": ["junk", {"type": "output_text", "text": "x = 1"}],
+                        },
+                    ],
+                },
+            },
+            "error": None,
+        }
+    )
+    (record,) = parse_batch_output(line, [_request()])
+    assert record["status"] == "ok"
+    assert record["text"] == "x = 1"
+
+
+def test_read_manifest_rejects_invalid_json(tmp_path):
+    path = tmp_path / "broken.batch.json"
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="not a valid batch manifest"):
+        read_manifest(path)
+
+
+def test_whitespace_explicit_model_falls_back(monkeypatch):
+    monkeypatch.delenv("OPENAI_OCR_MODEL", raising=False)
+    assert resolve_ocr_model("   ") == DEFAULT_OCR_MODEL
+    assert resolve_ocr_model("  padded-model  ") == "padded-model"
