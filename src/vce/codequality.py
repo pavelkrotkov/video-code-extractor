@@ -43,7 +43,7 @@ def _rendered_output(line: str) -> bool:
     text = line.strip()
     if len(text) < 12:
         return False
-    if "=" in text or _DIGIT.search(text) is None:
+    if "=" in text or not any(char.isdigit() for char in text):
         return False
     if _ARRAY.fullmatch(text):
         return True
