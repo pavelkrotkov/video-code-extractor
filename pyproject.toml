@@ -51,6 +51,9 @@ show_missing = true
 [tool.ty.environment]
 root = ["src"]
 
+[tool.ty.src]
+exclude-scripts = true
+
 [dependency-groups]
 dev = [
     # Declared so Dependabot tracks it; otherwise only a transitive
