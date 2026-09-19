@@ -146,6 +146,10 @@ def build_script(snippets: list[MergedSnippet]) -> str:
     return "\n\n\n".join(parts) + "\n"
 
 
+def _should_escalate(extraction: Extraction, threshold: float) -> bool:
+    return extraction.confidence < threshold or is_suspect(extraction.text)
+
+
 class Pipeline:
     """Runs the full extract→merge pipeline for a single video.
 
@@ -215,8 +219,8 @@ class Pipeline:
                 extraction = self._primary.extract(image, frame)
                 if score_code_likeness(frame, extraction.text).score < config.score_threshold:
                     continue
-                if self._escalation is not None and (
-                    extraction.confidence < config.escalate_below or is_suspect(extraction.text)
+                if self._escalation is not None and _should_escalate(
+                    extraction, config.escalate_below
                 ):
                     needs_escalation.append((i, frame, image, extraction))
                 else:
