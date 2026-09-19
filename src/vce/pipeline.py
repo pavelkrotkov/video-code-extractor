@@ -150,6 +150,17 @@ def _should_escalate(extraction: Extraction, threshold: float) -> bool:
     return extraction.confidence < threshold or is_suspect(extraction.text)
 
 
+def _warn_unresolved(snippets: Sequence[MergedSnippet]) -> None:
+    flagged = [(snippet, snippet.notes or ("structurally suspect code" if is_suspect(snippet.code) else "")) for snippet in snippets]
+    flagged = [(snippet, note) for snippet, note in flagged if note]
+    if not flagged:
+        return
+    print(f"vce: {len(flagged)} snippet(s) flagged for review:", file=sys.stderr)
+    for snippet, note in flagged:
+        where = ", ".join(frame.timecode for frame in snippet.sources)
+        print(f"vce:   [{where}] {note}", file=sys.stderr)
+
+
 class Pipeline:
     """Runs the full extract→merge pipeline for a single video.
 
@@ -262,6 +273,7 @@ class Pipeline:
             cluster_text=clean_transcription,
         )
         snippets = [r.snippet for r in results]
+        _warn_unresolved(snippets)
         t_merge = time.perf_counter() - t0
 
         script_path = config.out_dir / f"{base}.py"
