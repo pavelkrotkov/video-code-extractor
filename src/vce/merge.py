@@ -60,6 +60,7 @@ DEFAULT_CONFLICT_MARGIN = 0.1
 # Injectable so the default path stays pure; mocked in tests. Should be deterministic for callers
 # that want reproducible output.
 MergeFn = Callable[[Sequence[Extraction]], str]
+RepresentativeFn = Callable[[Sequence[Extraction]], Extraction]
 ClusterText = Callable[[str], str]
 
 
@@ -205,6 +206,7 @@ def merge_results(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE,
     conflict_margin: float = DEFAULT_CONFLICT_MARGIN,
     merge_fn: MergeFn | None = None,
+    representative_fn: RepresentativeFn | None = None,
     cluster_text: ClusterText | None = None,
 ) -> list[MergeResult]:
     """Cluster and merge ``extractions``, returning each snippet paired with its member extractions.
@@ -234,7 +236,9 @@ def merge_results(
 
     results: list[MergeResult] = []
     for cluster in _cluster(extractions, similarity_threshold, cluster_text):
-        representative = _choose_representative(cluster)
+        representative = (
+            representative_fn(cluster) if representative_fn is not None else _choose_representative(cluster)
+        )
         code = merge_fn(cluster) if merge_fn is not None else representative.text
         sources = tuple(sorted((e.frame for e in cluster), key=_frame_sort_key))
         notes = _build_notes(
@@ -260,6 +264,7 @@ def merge_snippets(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE,
     conflict_margin: float = DEFAULT_CONFLICT_MARGIN,
     merge_fn: MergeFn | None = None,
+    representative_fn: RepresentativeFn | None = None,
     cluster_text: ClusterText | None = None,
 ) -> list[MergedSnippet]:
     """Merge de-duplicated, provenance-tagged snippets from per-frame extractions.
@@ -298,6 +303,7 @@ def merge_snippets(
             low_confidence_threshold=low_confidence_threshold,
             conflict_margin=conflict_margin,
             merge_fn=merge_fn,
+            representative_fn=representative_fn,
             cluster_text=cluster_text,
         )
     ]
