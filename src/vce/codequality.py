@@ -10,6 +10,7 @@ from vce.types import Extraction
 _PROMPT = re.compile(r"^[ \t]*(In|Out)\s*\[\s*[\d ]*\]\s*:?[ \t]*")
 _NUMERIC = re.compile(r"[\s\d.,eE+\-\[\]()]+")
 _ARRAY = re.compile(r"(?:array|tensor|matrix)\s*\([\s\d.,eE+\-\[\]()]+\)")
+# Python detection gates suspicion only; it must never decide what source text gets deleted.
 _PYTHON = re.compile(
     r"(?m)^\s*(?:from\s+[\w.]+\s+import\b|import\s+[\w.]+|(?:async\s+)?def\s+\w+\s*\(|"
     r"class\s+\w+\b|@\w|(?:if|elif|else|for|while|with|try|except|finally)\b.*:|"
@@ -17,8 +18,8 @@ _PYTHON = re.compile(
 )
 
 
+# Structural validity is independent of OCR confidence, and compile() catches misplaced returns too.
 def parses_as_python(text: str) -> bool:
-    """Return whether non-empty text compiles as a Python module."""
     if not text.strip():
         return False
     try:
@@ -45,9 +46,8 @@ def _rendered_output(line: str) -> bool:
         return False
     if "=" in text or not any(char.isdigit() for char in text):
         return False
-    if _ARRAY.fullmatch(text):
-        return not parses_as_python(text)
-    return bool(_NUMERIC.fullmatch(text)) and not parses_as_python(text)
+    candidate = _ARRAY.fullmatch(text) or _NUMERIC.fullmatch(text)
+    return bool(candidate) and not parses_as_python(text)
 
 
 def _clean_line(line: str, in_output: bool) -> tuple[str | None, bool]:
@@ -62,8 +62,8 @@ def _clean_line(line: str, in_output: bool) -> tuple[str | None, bool]:
     return (None if _rendered_output(line) else line), False
 
 
+# Cleaning is derived-only: the upstream Extraction keeps raw OCR untouched for provenance.
 def clean_transcription(text: str) -> str:
-    """Strip notebook prompts/output while leaving ordinary source unchanged."""
     kept: list[str] = []
     in_output = False
     for line in text.splitlines():
@@ -73,8 +73,8 @@ def clean_transcription(text: str) -> str:
     return "\n".join(kept).strip("\n")
 
 
+# Prompts/output are definitive chrome; prose is left to the upstream code-likeness gate.
 def is_suspect(text: str) -> bool:
-    """Flag notebook pollution or Python-looking text that does not compile."""
     if not text.strip():
         return False
     if any(_prompt(line) is not None or _rendered_output(line) for line in text.splitlines()):
@@ -82,6 +82,7 @@ def is_suspect(text: str) -> bool:
     return _looks_python(text) and not parses_as_python(text)
 
 
+# Validity outranks confidence; among valid captures, completeness outranks confidence.
 def _variant_rank(extraction: Extraction) -> tuple[float, ...]:
     text = clean_transcription(extraction.text)
     nonblank = sum(1 for line in text.splitlines() if line.strip())
@@ -93,10 +94,8 @@ def _variant_rank(extraction: Extraction) -> tuple[float, ...]:
 
 
 def best_extraction(extractions: Sequence[Extraction]) -> Extraction:
-    """Choose the most complete valid extraction, then confidence and time."""
     return max(extractions, key=_variant_rank)
 
 
 def reconcile_cluster(extractions: Sequence[Extraction]) -> str:
-    """Choose the best visible variant in a cluster and return its cleaned text."""
     return clean_transcription(best_extraction(extractions).text)
