@@ -46,7 +46,7 @@ def _rendered_output(line: str) -> bool:
     if "=" in text or not any(char.isdigit() for char in text):
         return False
     if _ARRAY.fullmatch(text):
-        return True
+        return not parses_as_python(text)
     return bool(_NUMERIC.fullmatch(text)) and not parses_as_python(text)
 
 
@@ -87,11 +87,16 @@ def _variant_rank(extraction: Extraction) -> tuple[float, ...]:
     nonblank = sum(1 for line in text.splitlines() if line.strip())
     complete = (nonblank, len(text))
     earliest = -extraction.frame.timestamp_ms
-    if _looks_python(text) and parses_as_python(text):
+    if parses_as_python(text):
         return (1, *complete, extraction.confidence, earliest)
     return (0, extraction.confidence, *complete, earliest)
 
 
+def best_extraction(extractions: Sequence[Extraction]) -> Extraction:
+    """Choose the most complete valid extraction, then confidence and time."""
+    return max(extractions, key=_variant_rank)
+
+
 def reconcile_cluster(extractions: Sequence[Extraction]) -> str:
     """Choose the best visible variant in a cluster and return its cleaned text."""
-    return clean_transcription(max(extractions, key=_variant_rank).text)
+    return clean_transcription(best_extraction(extractions).text)
