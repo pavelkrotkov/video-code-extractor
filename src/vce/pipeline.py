@@ -34,6 +34,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from vce.backends.base import ExtractionBackend
+from vce.codequality import clean_transcription, is_suspect, reconcile_cluster
 from vce.cropping import crop_region
 from vce.dedup import dedup_frames
 from vce.frames import extract_frames, scene_change_frames
@@ -214,7 +215,9 @@ class Pipeline:
                 extraction = self._primary.extract(image, frame)
                 if score_code_likeness(frame, extraction.text).score < config.score_threshold:
                     continue
-                if self._escalation is not None and extraction.confidence < config.escalate_below:
+                if self._escalation is not None and (
+                    extraction.confidence < config.escalate_below or is_suspect(extraction.text)
+                ):
                     needs_escalation.append((i, frame, image, extraction))
                 else:
                     passed[i] = extraction
@@ -225,7 +228,7 @@ class Pipeline:
         t0 = time.perf_counter()
         if needs_escalation and self._escalation is not None:
             print(
-                f"[4/5] Escalating {len(needs_escalation)} low-confidence frames...",
+                f"[4/5] Escalating {len(needs_escalation)} low-confidence/suspect frames...",
                 file=sys.stderr,
             )
             with tqdm(needs_escalation, desc="  Escalate", unit="frame", file=sys.stderr) as pbar:
@@ -250,6 +253,8 @@ class Pipeline:
             similarity_threshold=config.similarity_threshold,
             low_confidence_threshold=config.low_confidence_threshold,
             conflict_margin=config.conflict_margin,
+            merge_fn=reconcile_cluster,
+            cluster_text=clean_transcription,
         )
         snippets = [r.snippet for r in results]
         t_merge = time.perf_counter() - t0
