@@ -31,7 +31,6 @@ from vce import batch_ocr
 from vce.backends.base import ExtractionBackend
 from vce.backends.macos_vision import MacOSVisionBackend, UnsupportedPlatformError
 from vce.backends.vision import VisionLLMBackend
-from vce.codequality import is_suspect
 from vce.cropping import crop_region
 from vce.dedup import dedup_frames
 from vce.frames import FFmpegNotFoundError, FrameExtractionError
@@ -39,7 +38,7 @@ from vce.merge import build_provenance, merge_results, write_provenance
 from vce.ocr import DEFAULT_OCR_MODEL, resolve_ocr_model
 from vce.pipeline import Pipeline, PipelineConfig, build_script, candidate_frames
 from vce.scoring import score_code_likeness
-from vce.types import BBox, MergedSnippet
+from vce.types import BBox
 
 MACOS_VISION = "macos-vision"
 VISION = "vision-gpt4v"
@@ -229,23 +228,6 @@ def _clean_errors() -> Iterator[None]:
         raise CLIError(str(exc)) from exc
 
 
-def _review_note(snippet: MergedSnippet) -> str:
-    if snippet.notes:
-        return snippet.notes
-    return "structurally suspect code" if is_suspect(snippet.code) else ""
-
-
-def _warn_flagged(snippets: Sequence[MergedSnippet]) -> None:
-    flagged = [(snippet, _review_note(snippet)) for snippet in snippets]
-    flagged = [(snippet, note) for snippet, note in flagged if note]
-    if not flagged:
-        return
-    print(f"vce: {len(flagged)} snippet(s) flagged for review:", file=sys.stderr)
-    for snippet, note in flagged:
-        where = ", ".join(frame.timecode for frame in snippet.sources)
-        print(f"vce:   [{where}] {note}", file=sys.stderr)
-
-
 def _run_extract(args: argparse.Namespace) -> int:
     with _clean_errors():
         primary, escalation, note = _resolve_backends(args)
@@ -280,7 +262,6 @@ def _run_extract(args: argparse.Namespace) -> int:
     print(f"    lines: {s.output_lines:,}   chars: {s.output_chars:,}")
     print(f"  Time: {time_str}")
     print(bar)
-    _warn_flagged(result.snippets)
     return 0
 
 
