@@ -88,7 +88,6 @@ def _group_lines(items: list[tuple[BBox, str, float]]) -> list[list[tuple[BBox, 
     return lines
 
 
-
 def _items(value: object, size: int) -> Sequence[object] | None:
     if isinstance(value, str | bytes):
         return None
@@ -111,7 +110,9 @@ def _parse_annotation(entry: object, width: int, height: int) -> tuple[BBox, str
         coords = [float(value) for value in bbox]
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(confidence) or not all(math.isfinite(value) for value in coords):
+    if not math.isfinite(confidence):
+        return None
+    if not all(math.isfinite(value) for value in coords):
         return None
     return _vision_bbox_to_pixels(coords, width, height), str(parts[0]), confidence
 
@@ -136,6 +137,7 @@ def _indent_prefixes(lines: Sequence[Sequence[tuple[BBox, str, float]]], toleran
         "    " * min(range(len(columns)), key=lambda i: abs(x - columns[i]))
         for x in lefts
     ]
+
 
 def _to_extraction(
     annotations: Sequence[object], frame: Frame, width: int, height: int
