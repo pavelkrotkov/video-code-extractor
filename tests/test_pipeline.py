@@ -157,12 +157,13 @@ def test_escalation_kept_only_when_it_reads_as_code(tmp_path, synthetic_frames):
     assert by_ts[0] == CODE and by_ts[2000] == CODE  # kept the primary where vision wasn't code
 
 
-def test_no_escalation_when_backend_absent(tmp_path, synthetic_frames):
+def test_no_escalation_when_backend_absent(tmp_path, synthetic_frames, capsys):
     primary = FakeBackend("primary", lambda f: (CODE, 0.1))  # below any threshold
     pipeline = Pipeline(primary, _config(tmp_path, escalate_below=0.6))  # no escalation wired
 
     result = pipeline.run(Path("lesson.mp4"))
     assert result.frames_kept == 3  # single-tier, nothing dropped by escalation
+    assert "flagged for review" in capsys.readouterr().err
 
 
 def test_high_confidence_invalid_code_is_escalated(tmp_path, synthetic_frames):
