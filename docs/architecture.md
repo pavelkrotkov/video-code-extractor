@@ -50,7 +50,7 @@ FFmpeg also has scene-change filters; its documentation describes `scdet` as det
 
 ### 4. Video OCR tools: good starting points, subtitle-biased
 
-**timminator/VideOCR** extracts burned-in subtitles from videos using local OCR locally or Google Lens in a hybrid mode, and it has both GUI and command-line usage. ([GitHub][6])
+**timminator/VideOCR** extracts burned-in subtitles from videos using local OCR or Google Lens in a hybrid mode, and it has both GUI and command-line usage. ([GitHub][6])
 
 
 **CaptiOCR** is interesting if you want a semi-manual workflow: you select a rectangular screen region, it repeatedly screenshots that region, runs Tesseract locally, and uses duplicate/novelty filtering to stitch text over time. Its README explicitly mentions ROVER plus TF-IDF novelty scoring to filter duplicates while preserving new content. ([GitHub][8])
