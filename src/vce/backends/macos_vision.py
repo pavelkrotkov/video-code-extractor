@@ -98,6 +98,14 @@ def _items(value: object, size: int) -> Sequence[object] | None:
     return value
 
 
+def _finite_floats(values: Sequence[object]) -> list[float] | None:
+    try:
+        numbers = [float(value) for value in values]
+    except (TypeError, ValueError):
+        return None
+    return numbers if all(math.isfinite(value) for value in numbers) else None
+
+
 def _parse_annotation(entry: object, width: int, height: int) -> tuple[BBox, str, float] | None:
     parts = _items(entry, 3)
     if parts is None:
@@ -105,15 +113,10 @@ def _parse_annotation(entry: object, width: int, height: int) -> tuple[BBox, str
     bbox = _items(parts[2], 4)
     if bbox is None:
         return None
-    try:
-        confidence = float(parts[1])
-        coords = [float(value) for value in bbox]
-    except (TypeError, ValueError):
+    values = _finite_floats([parts[1], *bbox])
+    if values is None:
         return None
-    if not math.isfinite(confidence):
-        return None
-    if not all(math.isfinite(value) for value in coords):
-        return None
+    confidence, *coords = values
     return _vision_bbox_to_pixels(coords, width, height), str(parts[0]), confidence
 
 
