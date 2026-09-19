@@ -52,7 +52,7 @@ show_missing = true
 root = ["src"]
 
 [tool.ty.src]
-exclude-scripts = true
+exclude = ["tools/**"]
 
 [dependency-groups]
 dev = [
