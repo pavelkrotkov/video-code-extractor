@@ -165,7 +165,6 @@ def test_no_escalation_when_backend_absent(tmp_path, synthetic_frames):
     assert result.frames_kept == 3  # single-tier, nothing dropped by escalation
 
 
-
 def test_high_confidence_invalid_code_is_escalated(tmp_path, synthetic_frames):
     def primary_fn(frame):
         if frame.timestamp_ms == 1000:
