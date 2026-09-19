@@ -17,7 +17,8 @@ Two-tier cost control
 ---------------------
 ``primary`` is the cheap backend (Apple Vision on macOS by default). ``escalation`` is the accurate vision
 backend, invoked only for kept frames whose primary confidence is below
-:attr:`PipelineConfig.escalate_below`. When no escalation backend is wired up (e.g. no API key),
+:attr:`PipelineConfig.escalate_below` or whose transcription is structurally suspect. When no
+escalation backend is wired up (e.g. no API key),
 the pipeline runs single-tier on the primary backend alone.
 
 Everything heavy (ffmpeg, OCR, the OpenAI client) lives behind injected callables/objects, so the
@@ -150,8 +151,14 @@ def _should_escalate(extraction: Extraction, threshold: float) -> bool:
     return extraction.confidence < threshold or is_suspect(extraction.text)
 
 
-def _warn_unresolved(snippets: Sequence[MergedSnippet]) -> None:
-    flagged = [(snippet, snippet.notes or ("structurally suspect code" if is_suspect(snippet.code) else "")) for snippet in snippets]
+def _review_note(snippet: MergedSnippet) -> str:
+    if snippet.notes:
+        return snippet.notes
+    return "structurally suspect code" if is_suspect(snippet.code) else ""
+
+
+def _warn_unresolved(snippets: list[MergedSnippet]) -> None:
+    flagged = [(snippet, _review_note(snippet)) for snippet in snippets]
     flagged = [(snippet, note) for snippet, note in flagged if note]
     if not flagged:
         return
@@ -165,8 +172,8 @@ class Pipeline:
     """Runs the full extract→merge pipeline for a single video.
 
     Backends are injected so the orchestration is testable offline and the two-tier policy is
-    explicit: ``primary`` is always used; ``escalation`` (when provided) re-reads only the kept,
-    low-confidence frames.
+    explicit: ``primary`` is always used; ``escalation`` (when provided) re-reads only kept
+    low-confidence or structurally suspect frames.
     """
 
     def __init__(
