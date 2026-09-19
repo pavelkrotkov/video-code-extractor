@@ -26,6 +26,8 @@ def test_clean_transcription_preserves_python_literal_rows():
     cleaned = clean_transcription(raw)
     assert "[1, 2, 3, 4]," in cleaned
     assert "[5, 6, 7, 8]," in cleaned
+    source = "x = (\n    array([1., 2., 3., 4.])\n)"
+    assert clean_transcription(source) == source
 
 
 def test_out_prompt_drops_nonnumeric_repr():
@@ -37,6 +39,9 @@ def test_reconcile_prefers_complete_valid_variant():
     broken = _ext("def f():\n    return [", 0.99, 0)
     good = _ext("def f():\n    return [1, 2]", 0.80, 1000)
     assert reconcile_cluster([broken, good]) == good.text
+    valid = _ext("raise ValueError()", 0.70, 2000)
+    malformed = _ext("raise ValueError(", 0.99, 3000)
+    assert reconcile_cluster([malformed, valid]) == valid.text
 
 
 def test_reconcile_prefers_confidence_for_non_python():
