@@ -12,6 +12,8 @@ def test_python_validity_catches_structural_ocr_errors():
     assert parses_as_python("def f():\n    return 1")
     assert not parses_as_python("x = 1\nreturn x")
     assert is_suspect("y = jnp.ones((3, 3)")
+    assert is_suspect("    return foo()")
+    assert is_suspect("break")
     assert not is_suspect("the quick brown fox")
 
 
@@ -19,6 +21,9 @@ def test_clean_transcription_removes_notebook_output():
     raw = "In [1]: import numpy as np\nx = compute()\nOut[1]:\narray([0., 0., 0., 0.])"
     assert clean_transcription(raw) == "import numpy as np\nx = compute()"
     assert is_suspect(raw)
+    source = "Out[1] = compute()\nprint(Out[1])"
+    assert clean_transcription(source) == source
+    assert not is_suspect(source)
 
 
 def test_clean_transcription_preserves_python_literal_rows():
