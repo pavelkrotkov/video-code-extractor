@@ -178,6 +178,18 @@ def test_high_confidence_invalid_code_is_escalated(tmp_path, synthetic_frames):
     assert [frame.timestamp_ms for frame in escalation.calls] == [1000]
 
 
+def test_cleanable_primary_beats_malformed_escalation_and_stays_flagged(
+    tmp_path, synthetic_frames
+):
+    raw = "In [1]: x = np.array([1, 2])"
+    primary = FakeBackend("primary", lambda f: (raw, 0.4))
+    escalation = FakeBackend("vision", lambda f: ("x = np.array([1, 2", 0.99))
+    result = Pipeline(primary, _config(tmp_path), escalation=escalation).run(Path("lesson.mp4"))
+
+    assert result.script_path.read_text() == "x = np.array([1, 2])\n"
+    assert "low confidence" in result.snippets[0].notes
+
+
 def test_notebook_output_is_cleaned_but_raw_ocr_is_preserved(tmp_path, synthetic_frames):
     raw = "In [1]: def foo():\n    return 1\nOut[1]:\narray([0., 0., 0., 0.])"
     result = Pipeline(FakeBackend("primary", lambda f: (raw, 0.99)), _config(tmp_path)).run(
