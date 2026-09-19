@@ -138,10 +138,7 @@ def _indent_prefixes(
     for x in sorted(set(lefts)):
         if not columns or x - columns[-1] > max(tolerance, 1.0):
             columns.append(x)
-    return [
-        "    " * min(range(len(columns)), key=lambda i: abs(x - columns[i]))
-        for x in lefts
-    ]
+    return ["    " * min(range(len(columns)), key=lambda i: abs(x - columns[i])) for x in lefts]
 
 
 def _to_extraction(
