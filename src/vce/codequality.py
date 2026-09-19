@@ -41,13 +41,25 @@ def _prompt(line: str) -> tuple[str, str] | None:
 
 def _rendered_output(line: str) -> bool:
     text = line.strip()
-    if len(text) < 12 or "=" in text:
+    if len(text) < 12:
         return False
-    if not any(char.isdigit() for char in text):
+    if "=" in text or _DIGIT.search(text) is None:
         return False
     if _ARRAY.fullmatch(text):
         return True
     return bool(_NUMERIC.fullmatch(text)) and not parses_as_python(text)
+
+
+def _clean_line(line: str, in_output: bool) -> tuple[str | None, bool]:
+    prompt = _prompt(line)
+    if prompt is not None:
+        kind, line = prompt
+        if kind == "Out":
+            return None, True
+        return (line if line.strip() else None), False
+    if in_output:
+        return None, bool(line.strip())
+    return (None if _rendered_output(line) else line), False
 
 
 def clean_transcription(text: str) -> str:
@@ -55,17 +67,8 @@ def clean_transcription(text: str) -> str:
     kept: list[str] = []
     in_output = False
     for line in text.splitlines():
-        prompt = _prompt(line)
-        if prompt is not None:
-            kind, line = prompt
-            in_output = kind == "Out"
-            if in_output or not line.strip():
-                continue
-        elif in_output:
-            if not line.strip():
-                in_output = False
-            continue
-        if not _rendered_output(line):
+        line, in_output = _clean_line(line, in_output)
+        if line is not None:
             kept.append(line)
     return "\n".join(kept).strip("\n")
 
