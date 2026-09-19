@@ -31,6 +31,7 @@ from vce import batch_ocr
 from vce.backends.base import ExtractionBackend
 from vce.backends.macos_vision import MacOSVisionBackend, UnsupportedPlatformError
 from vce.backends.vision import VisionLLMBackend
+from vce.codequality import is_suspect
 from vce.cropping import crop_region
 from vce.dedup import dedup_frames
 from vce.frames import FFmpegNotFoundError, FrameExtractionError
@@ -262,6 +263,13 @@ def _run_extract(args: argparse.Namespace) -> int:
     print(f"    lines: {s.output_lines:,}   chars: {s.output_chars:,}")
     print(f"  Time: {time_str}")
     print(bar)
+    flagged = [snippet for snippet in result.snippets if snippet.notes or is_suspect(snippet.code)]
+    if flagged:
+        print(f"vce: {len(flagged)} snippet(s) flagged for review:", file=sys.stderr)
+        for snippet in flagged:
+            where = ", ".join(frame.timecode for frame in snippet.sources)
+            note = snippet.notes or "structurally suspect code"
+            print(f"vce:   [{where}] {note}", file=sys.stderr)
     return 0
 
 
