@@ -172,9 +172,9 @@ def _build_notes(
         # Highest confidence among members whose text differs from the representative's.
         runner_up = max(
             (e.confidence for e in cluster if _comparison_text(e, cluster_text) != rep_norm),
-            default=None,
+            default=float("-inf"),
         )
-        if runner_up is not None and representative.confidence - runner_up <= conflict_margin:
+        if representative.confidence - runner_up <= conflict_margin:
             notes.append(
                 f"conflict: {len(distinct)} differing transcriptions with near-equal confidence "
                 f"(representative {representative.confidence:.2f} vs runner-up {runner_up:.2f}); "
