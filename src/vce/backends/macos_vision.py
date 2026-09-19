@@ -134,11 +134,23 @@ def _indent_prefixes(
     if not lines:
         return []
     lefts = [min(item[0].x for item in line) for line in lines]
-    columns: list[int] = []
-    for x in sorted(set(lefts)):
-        if not columns or x - columns[-1] > max(tolerance, 1.0):
+    ordered = sorted(set(lefts))
+    columns = [ordered[0]]
+    for x in ordered[1:]:
+        if x - columns[-1] > max(tolerance, 1.0):
             columns.append(x)
     return ["    " * min(range(len(columns)), key=lambda i: abs(x - columns[i])) for x in lefts]
+
+
+def _parse_annotations(
+    annotations: Sequence[object], width: int, height: int
+) -> list[tuple[BBox, str, float]]:
+    converted = []
+    for entry in annotations:
+        parsed = _parse_annotation(entry, width, height)
+        if parsed is not None:
+            converted.append(parsed)
+    return converted
 
 
 def _to_extraction(
@@ -154,11 +166,7 @@ def _to_extraction(
     A single malformed annotation (wrong arity, a non-4 bounding box, a non-numeric confidence) is
     skipped rather than crashing the whole frame.
     """
-    converted: list[tuple[BBox, str, float]] = []
-    for entry in annotations:
-        parsed = _parse_annotation(entry, width, height)
-        if parsed is not None:
-            converted.append(parsed)
+    converted = _parse_annotations(annotations, width, height)
     lines = _group_lines(converted)
     prefixes = _indent_prefixes(lines, _char_width(converted))
     texts = [
