@@ -178,9 +178,7 @@ def test_high_confidence_invalid_code_is_escalated(tmp_path, synthetic_frames):
     assert [frame.timestamp_ms for frame in escalation.calls] == [1000]
 
 
-def test_cleanable_primary_beats_malformed_escalation_and_stays_flagged(
-    tmp_path, synthetic_frames
-):
+def test_cleanable_primary_beats_malformed_escalation_and_stays_flagged(tmp_path, synthetic_frames):
     raw = "In [1]: x = np.array([1, 2])"
     primary = FakeBackend("primary", lambda f: (raw, 0.4))
     escalation = FakeBackend("vision", lambda f: ("x = np.array([1, 2", 0.99))
