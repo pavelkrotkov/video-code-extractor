@@ -100,7 +100,7 @@ def _items(value: object, size: int) -> Sequence[object] | None:
 
 def _finite_floats(values: Sequence[object]) -> list[float] | None:
     try:
-        numbers = [float(value) for value in values]
+        numbers = [float(value) for value in values]  # ty: ignore[invalid-argument-type]
     except (TypeError, ValueError):
         return None
     return numbers if all(math.isfinite(value) for value in numbers) else None
