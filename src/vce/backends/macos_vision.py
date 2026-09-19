@@ -14,10 +14,11 @@ flip it implies) lives in :func:`_vision_bbox_to_pixels`.
 
 from __future__ import annotations
 
+import math
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from statistics import fmean
+from statistics import fmean, median
 
 from vce.types import BBox, Extraction, Frame
 
@@ -87,8 +88,57 @@ def _group_lines(items: list[tuple[BBox, str, float]]) -> list[list[tuple[BBox, 
     return lines
 
 
+
+def _items(value: object, size: int) -> Sequence[object] | None:
+    if isinstance(value, str | bytes):
+        return None
+    if not isinstance(value, Sequence):
+        return None
+    if len(value) != size:
+        return None
+    return value
+
+
+def _parse_annotation(entry: object, width: int, height: int) -> tuple[BBox, str, float] | None:
+    parts = _items(entry, 3)
+    if parts is None:
+        return None
+    bbox = _items(parts[2], 4)
+    if bbox is None:
+        return None
+    try:
+        confidence = float(parts[1])
+        coords = [float(value) for value in bbox]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(confidence) or not all(math.isfinite(value) for value in coords):
+        return None
+    return _vision_bbox_to_pixels(coords, width, height), str(parts[0]), confidence
+
+
+def _char_width(items: Sequence[tuple[BBox, str, float]]) -> float:
+    widths = [box.width / len(text) for box, text, _ in items if text]
+    if widths:
+        return median(widths)
+    heights = [box.height for box, _, _ in items if box.height]
+    return max(median(heights) * 0.6, 1.0) if heights else 1.0
+
+
+def _indent_prefixes(lines: Sequence[Sequence[tuple[BBox, str, float]]], tolerance: float) -> list[str]:
+    if not lines:
+        return []
+    lefts = [min(item[0].x for item in line) for line in lines]
+    columns: list[int] = []
+    for x in sorted(set(lefts)):
+        if not columns or x - columns[-1] > max(tolerance, 1.0):
+            columns.append(x)
+    return [
+        "    " * min(range(len(columns)), key=lambda i: abs(x - columns[i]))
+        for x in lefts
+    ]
+
 def _to_extraction(
-    annotations: Sequence[Annotation], frame: Frame, width: int, height: int
+    annotations: Sequence[object], frame: Frame, width: int, height: int
 ) -> Extraction:
     """Map Vision annotations for one image to an :class:`Extraction` in reading order.
 
@@ -98,19 +148,19 @@ def _to_extraction(
     empty extraction with ``confidence == 0.0``. Confidence is the mean of the Vision confidences.
 
     A single malformed annotation (wrong arity, a non-4 bounding box, a non-numeric confidence) is
-    skipped rather than crashing the whole frame, mirroring how the old PaddleOCR backend tolerated
-    its engine's version-to-version result shifts.
+    skipped rather than crashing the whole frame.
     """
     converted: list[tuple[BBox, str, float]] = []
     for entry in annotations:
-        try:
-            text, conf, norm_bbox = entry
-            item = (_vision_bbox_to_pixels(norm_bbox, width, height), str(text), float(conf))
-        except (ValueError, TypeError, IndexError):
-            continue  # skip a malformed annotation, keep the rest of the frame
-        converted.append(item)
+        parsed = _parse_annotation(entry, width, height)
+        if parsed is not None:
+            converted.append(parsed)
     lines = _group_lines(converted)
-    texts = [" ".join(it[1] for it in line) for line in lines]
+    prefixes = _indent_prefixes(lines, _char_width(converted))
+    texts = [
+        prefix + " ".join(item[1] for item in line)
+        for prefix, line in zip(prefixes, lines, strict=True)
+    ]
     confs = [it[2] for it in converted]
     bboxes = tuple(it[0] for line in lines for it in line)
     return Extraction(
@@ -155,7 +205,7 @@ class MacOSVisionBackend:
                 "--backend vision-gpt4v (needs OPENAI_API_KEY)"
             )
         try:
-            from ocrmac import ocrmac
+            from ocrmac import ocrmac  # ty: ignore[unresolved-import]
         except ImportError as exc:  # pragma: no cover - exercised via monkeypatched import
             raise ImportError(
                 "ocrmac is required for the macos-vision backend on macOS: pip install ocrmac"
