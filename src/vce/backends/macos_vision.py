@@ -128,7 +128,9 @@ def _char_width(items: Sequence[tuple[BBox, str, float]]) -> float:
     return max(median(heights) * 0.6, 1.0) if heights else 1.0
 
 
-def _indent_prefixes(lines: Sequence[Sequence[tuple[BBox, str, float]]], tolerance: float) -> list[str]:
+def _indent_prefixes(
+    lines: Sequence[Sequence[tuple[BBox, str, float]]], tolerance: float
+) -> list[str]:
     if not lines:
         return []
     lefts = [min(item[0].x for item in line) for line in lines]
