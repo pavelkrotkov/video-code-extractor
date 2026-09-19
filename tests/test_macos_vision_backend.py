@@ -130,7 +130,6 @@ def test_to_extraction_skips_malformed_annotations():
     assert ext.confidence == pytest.approx((0.95 + 0.85) / 2)
 
 
-
 def test_to_extraction_skips_non_finite_bbox():
     annotations = [
         ("bad", 0.9, (float("nan"), 0.8, 0.2, 0.05)),
