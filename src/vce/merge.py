@@ -237,7 +237,9 @@ def merge_results(
     results: list[MergeResult] = []
     for cluster in _cluster(extractions, similarity_threshold, cluster_text):
         representative = (
-            representative_fn(cluster) if representative_fn is not None else _choose_representative(cluster)
+            representative_fn(cluster)
+            if representative_fn is not None
+            else _choose_representative(cluster)
         )
         code = merge_fn(cluster) if merge_fn is not None else representative.text
         sources = tuple(sorted((e.frame for e in cluster), key=_frame_sort_key))
