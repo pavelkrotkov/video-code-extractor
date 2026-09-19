@@ -165,6 +165,44 @@ def test_no_escalation_when_backend_absent(tmp_path, synthetic_frames):
     assert result.frames_kept == 3  # single-tier, nothing dropped by escalation
 
 
+
+def test_high_confidence_invalid_code_is_escalated(tmp_path, synthetic_frames):
+    def primary_fn(frame):
+        if frame.timestamp_ms == 1000:
+            return ("def broken(:\n    pass", 1.0)
+        return (CODE, 0.95)
+
+    primary = FakeBackend("primary", primary_fn)
+    escalation = FakeBackend("vision", lambda f: (CODE, 0.99))
+    Pipeline(primary, _config(tmp_path), escalation=escalation).run(Path("lesson.mp4"))
+
+    assert [frame.timestamp_ms for frame in escalation.calls] == [1000]
+
+
+def test_notebook_output_is_cleaned_but_raw_ocr_is_preserved(tmp_path, synthetic_frames):
+    raw = "In [1]: def foo():\n    return 1\nOut[1]:\narray([0., 0., 0., 0.])"
+    result = Pipeline(FakeBackend("primary", lambda f: (raw, 0.99)), _config(tmp_path)).run(
+        Path("lesson.mp4")
+    )
+
+    assert result.script_path.read_text() == CODE + "\n"
+    provenance = json.loads(result.provenance_path.read_text())
+    assert all(entry["raw_ocr"] == raw for entry in provenance)
+    assert all(entry["cleaned_code"] == CODE for entry in provenance)
+
+
+def test_rendered_output_differences_do_not_duplicate_code(tmp_path, synthetic_frames):
+    def primary_fn(frame):
+        values = " ".join(str(frame.timestamp_ms + i) for i in range(6))
+        return (f"x = compute()\nOut[1]:\n[{values}]", 0.99)
+
+    result = Pipeline(FakeBackend("primary", primary_fn), _config(tmp_path)).run(Path("lesson.mp4"))
+
+    assert result.num_snippets == 1
+    assert result.script_path.read_text() == "x = compute()\n"
+    assert result.snippets[0].notes == ""
+
+
 def test_crop_is_applied_before_extraction(tmp_path, synthetic_frames):
     seen: list[Path] = []
 
