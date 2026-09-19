@@ -34,7 +34,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from vce.backends.base import ExtractionBackend
-from vce.codequality import clean_transcription, is_suspect, reconcile_cluster
+from vce.codequality import best_extraction, clean_transcription, is_suspect, reconcile_cluster
 from vce.cropping import crop_region
 from vce.dedup import dedup_frames
 from vce.frames import extract_frames, scene_change_frames
@@ -240,7 +240,7 @@ class Pipeline:
                     escalated = self._escalation.extract(image, frame)
                     escalated_count += 1
                     if score_code_likeness(frame, escalated.text).score >= config.score_threshold:
-                        passed[i] = escalated
+                        passed[i] = best_extraction((primary_ext, escalated))
                     else:
                         passed[i] = primary_ext
         else:
@@ -258,6 +258,7 @@ class Pipeline:
             low_confidence_threshold=config.low_confidence_threshold,
             conflict_margin=config.conflict_margin,
             merge_fn=reconcile_cluster,
+            representative_fn=best_extraction,
             cluster_text=clean_transcription,
         )
         snippets = [r.snippet for r in results]
