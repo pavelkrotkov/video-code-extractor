@@ -179,7 +179,7 @@ def test_crop_is_applied_before_extraction(tmp_path, synthetic_frames):
         seen.append(image_path)
         return original(image_path, frame)
 
-    backend.extract = spy  # type: ignore[method-assign]
+    backend.extract = spy  # ty: ignore[invalid-assignment]
 
     pipeline = Pipeline(backend, _config(tmp_path, crop=BBox(0, 0, 16, 16)))
     pipeline.run(Path("lesson.mp4"))
