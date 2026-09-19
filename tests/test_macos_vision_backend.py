@@ -130,6 +130,26 @@ def test_to_extraction_skips_malformed_annotations():
     assert ext.confidence == pytest.approx((0.95 + 0.85) / 2)
 
 
+
+def test_to_extraction_skips_non_finite_bbox():
+    annotations = [
+        ("bad", 0.9, (float("nan"), 0.8, 0.2, 0.05)),
+        ("good", 0.9, (0.1, 0.6, 0.2, 0.05)),
+    ]
+    assert _to_extraction(annotations, FRAME, 100, 100).text == "good"
+
+
+def test_to_extraction_reconstructs_indentation_from_geometry():
+    annotations = [
+        ("return 0", 0.9, (0.18, 0.40, 0.28, 0.05)),
+        ("def f(x):", 0.9, (0.10, 0.80, 0.32, 0.05)),
+        ("if x:", 0.9, (0.14, 0.60, 0.20, 0.05)),
+        ("return x", 0.9, (0.18, 0.50, 0.28, 0.05)),
+    ]
+    ext = _to_extraction(annotations, FRAME, 100, 100)
+    assert ext.text == "def f(x):\n    if x:\n        return x\n        return 0"
+
+
 def test_to_extraction_empty_returns_empty_extraction():
     ext = _to_extraction([], FRAME, 100, 100)
     assert ext.text == ""
