@@ -157,12 +157,60 @@ def test_escalation_kept_only_when_it_reads_as_code(tmp_path, synthetic_frames):
     assert by_ts[0] == CODE and by_ts[2000] == CODE  # kept the primary where vision wasn't code
 
 
-def test_no_escalation_when_backend_absent(tmp_path, synthetic_frames):
+def test_no_escalation_when_backend_absent(tmp_path, synthetic_frames, capsys):
     primary = FakeBackend("primary", lambda f: (CODE, 0.1))  # below any threshold
     pipeline = Pipeline(primary, _config(tmp_path, escalate_below=0.6))  # no escalation wired
 
     result = pipeline.run(Path("lesson.mp4"))
     assert result.frames_kept == 3  # single-tier, nothing dropped by escalation
+    assert "flagged for review" in capsys.readouterr().err
+
+
+def test_high_confidence_invalid_code_is_escalated(tmp_path, synthetic_frames):
+    def primary_fn(frame):
+        if frame.timestamp_ms == 1000:
+            return ("def broken(:\n    pass", 1.0)
+        return (CODE, 0.95)
+
+    primary = FakeBackend("primary", primary_fn)
+    escalation = FakeBackend("vision", lambda f: (CODE, 0.99))
+    Pipeline(primary, _config(tmp_path), escalation=escalation).run(Path("lesson.mp4"))
+
+    assert [frame.timestamp_ms for frame in escalation.calls] == [1000]
+
+
+def test_cleanable_primary_beats_malformed_escalation_and_stays_flagged(tmp_path, synthetic_frames):
+    raw = "In [1]: x = np.array([1, 2])"
+    primary = FakeBackend("primary", lambda f: (raw, 0.4))
+    escalation = FakeBackend("vision", lambda f: ("x = np.array([1, 2", 0.99))
+    result = Pipeline(primary, _config(tmp_path), escalation=escalation).run(Path("lesson.mp4"))
+
+    assert result.script_path.read_text() == "x = np.array([1, 2])\n"
+    assert "low confidence" in result.snippets[0].notes
+
+
+def test_notebook_output_is_cleaned_but_raw_ocr_is_preserved(tmp_path, synthetic_frames):
+    raw = "In [1]: def foo():\n    return 1\nOut[1]:\narray([0., 0., 0., 0.])"
+    result = Pipeline(FakeBackend("primary", lambda f: (raw, 0.99)), _config(tmp_path)).run(
+        Path("lesson.mp4")
+    )
+
+    assert result.script_path.read_text() == CODE + "\n"
+    provenance = json.loads(result.provenance_path.read_text())
+    assert all(entry["raw_ocr"] == raw for entry in provenance)
+    assert all(entry["cleaned_code"] == CODE for entry in provenance)
+
+
+def test_rendered_output_differences_do_not_duplicate_code(tmp_path, synthetic_frames):
+    def primary_fn(frame):
+        values = " ".join(str(frame.timestamp_ms + i) for i in range(6))
+        return (f"x = compute()\nOut[1]:\n[{values}]", 0.99)
+
+    result = Pipeline(FakeBackend("primary", primary_fn), _config(tmp_path)).run(Path("lesson.mp4"))
+
+    assert result.num_snippets == 1
+    assert result.script_path.read_text() == "x = compute()\n"
+    assert result.snippets[0].notes == ""
 
 
 def test_crop_is_applied_before_extraction(tmp_path, synthetic_frames):
@@ -179,7 +227,7 @@ def test_crop_is_applied_before_extraction(tmp_path, synthetic_frames):
         seen.append(image_path)
         return original(image_path, frame)
 
-    backend.extract = spy  # type: ignore[method-assign]
+    backend.extract = spy  # ty: ignore[invalid-assignment]
 
     pipeline = Pipeline(backend, _config(tmp_path, crop=BBox(0, 0, 16, 16)))
     pipeline.run(Path("lesson.mp4"))
