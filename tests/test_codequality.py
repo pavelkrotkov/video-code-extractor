@@ -21,6 +21,8 @@ def test_clean_transcription_removes_notebook_output():
     raw = "In [1]: import numpy as np\nx = compute()\nOut[1]:\narray([0., 0., 0., 0.])"
     assert clean_transcription(raw) == "import numpy as np\nx = compute()"
     assert is_suspect(raw)
+    continued = "In [1]: def f():\n   ...:     return 1"
+    assert clean_transcription(continued) == "def f():\n    return 1"
     source = "Out[1] = compute()\nprint(Out[1])"
     assert clean_transcription(source) == source
     assert not is_suspect(source)
@@ -53,3 +55,6 @@ def test_reconcile_prefers_confidence_for_non_python():
     clean = _ext("const x = 5;", 0.95, 0)
     noisy = _ext("const x = 5;\n|", 0.80, 1000)
     assert reconcile_cluster([noisy, clean]) == clean.text
+    js = _ext("const descriptiveVariable = computeSomething(argumentOne, argumentTwo);", 0.95, 2000)
+    pythonish = _ext("descriptiveVariable = computeSomething(argumentOne, argumentTwo);", 0.80, 3000)
+    assert reconcile_cluster([pythonish, js]) == js.text
