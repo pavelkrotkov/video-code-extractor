@@ -36,9 +36,10 @@ def _looks_python(text: str) -> bool:
 
 def _prompt(line: str) -> tuple[str, str] | None:
     match = _PROMPT.match(line)
-    if match is None:
-        return None
-    return match.group(1), line[match.end() :]
+    if match is not None:
+        return match.group(1), line[match.end() :]
+    match = _CONTINUATION.match(line)
+    return ("In", line[match.end() :]) if match is not None else None
 
 
 def _rendered_output(line: str) -> bool:
@@ -84,18 +85,19 @@ def is_suspect(text: str) -> bool:
 
 
 # Validity outranks confidence; among valid captures, completeness outranks confidence.
-def _variant_rank(extraction: Extraction) -> tuple[float, ...]:
+def _variant_rank(extraction: Extraction, prefer_validity: bool) -> tuple[float, ...]:
     text = clean_transcription(extraction.text)
     nonblank = sum(1 for line in text.splitlines() if line.strip())
     complete = (nonblank, len(text))
     earliest = -extraction.frame.timestamp_ms
-    if parses_as_python(text):
+    if prefer_validity and parses_as_python(text):
         return (1, *complete, extraction.confidence, earliest)
     return (0, extraction.confidence, *complete, earliest)
 
 
 def best_extraction(extractions: Sequence[Extraction]) -> Extraction:
-    return max(extractions, key=_variant_rank)
+    prefer_validity = all(_looks_python(clean_transcription(e.text)) for e in extractions)
+    return max(extractions, key=lambda e: _variant_rank(e, prefer_validity))
 
 
 def reconcile_cluster(extractions: Sequence[Extraction]) -> str:
