@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from vce.types import Extraction
 
 _PROMPT = re.compile(r"^[ \t]*(In|Out)\s*\[\s*[\d ]*\]\s*:[ \t]*")
+_CONTINUATION = re.compile(r"^[ \\t]*\\.\\.\\.:[ \\t]*")
 _NUMERIC = re.compile(r"[\s\d.,eE+\-\[\]()]+")
 _ARRAY = re.compile(r"(?:array|tensor|matrix)\s*\([\s\d.,eE+\-\[\]()]+\)")
 # Python detection gates suspicion only; it must never decide what source text gets deleted.
