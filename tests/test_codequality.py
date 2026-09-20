@@ -55,6 +55,10 @@ def test_reconcile_prefers_confidence_for_non_python():
     clean = _ext("const x = 5;", 0.95, 0)
     noisy = _ext("const x = 5;\n|", 0.80, 1000)
     assert reconcile_cluster([noisy, clean]) == clean.text
-    js = _ext("const descriptiveVariable = computeSomething(argumentOne, argumentTwo);", 0.95, 2000)
-    pythonish = _ext("descriptiveVariable = computeSomething(argumentOne, argumentTwo);", 0.80, 3000)
+    js = _ext(
+        "const descriptiveVariable = computeSomething(argumentOne, argumentTwo);", 0.95, 2000
+    )
+    pythonish = _ext(
+        "descriptiveVariable = computeSomething(argumentOne, argumentTwo);", 0.80, 3000
+    )
     assert reconcile_cluster([pythonish, js]) == js.text
