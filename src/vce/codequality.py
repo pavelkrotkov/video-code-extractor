@@ -13,7 +13,8 @@ _ARRAY = re.compile(r"(?:array|tensor|matrix)\s*\([\s\d.,eE+\-\[\]()]+\)")
 # Python detection gates suspicion only; it must never decide what source text gets deleted.
 _PYTHON = re.compile(
     r"(?m)^\s*(?:from\s+[\w.]+\s+import\b|import\s+[\w.]+|(?:async\s+)?def\s+\w+\s*\(|"
-    r"class\s+\w+\b|@\w|(?:if|elif|else|for|while|with|try|except|finally)\b.*:|"\n    r"(?:return|raise|yield|break|continue|await)\b|"
+    r"class\s+\w+\b|@\w|(?:if|elif|else|for|while|with|try|except|finally)\b.*:|"
+    r"(?:return|raise|yield|break|continue|await)\b|"
     r"[\w.]+(?:\[[^\]\n]*\])?\s*(?:[-+*/%@&|^]|//|\*\*)?=(?!=)|[\w.]+\()"
 )
 
