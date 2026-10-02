@@ -122,7 +122,7 @@ jobs:
           ref: ${{ needs.command.outputs.head }}
 
       - name: Review with J-Bot
-        uses: pgup-ai/jbot-review-action@13b305f4a0e93d863b9bf7ccbde2ec7220ba0cf9
+        uses: pgup-ai/jbot-review-action@60269ea5e42e0f8fc09391121a429fc7f00f8fde
         with:
           model: ${{ needs.command.outputs.model }}
           pr-number: ${{ github.event.issue.number }}
