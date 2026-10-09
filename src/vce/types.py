@@ -14,6 +14,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def format_timecode(timestamp_ms: int) -> str:
+    """``HH:MM:SS.mmm`` rendering of a millisecond timestamp."""
+    ms = timestamp_ms % 1000
+    s_total = timestamp_ms // 1000
+    s = s_total % 60
+    m = (s_total // 60) % 60
+    h = s_total // 3600
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
 @dataclass(frozen=True)
 class Frame:
     """A single sampled video frame on disk, tagged with its source timestamp."""
@@ -24,12 +34,7 @@ class Frame:
     @property
     def timecode(self) -> str:
         """``HH:MM:SS.mmm`` rendering of :attr:`timestamp_ms`."""
-        ms = self.timestamp_ms % 1000
-        s_total = self.timestamp_ms // 1000
-        s = s_total % 60
-        m = (s_total // 60) % 60
-        h = s_total // 3600
-        return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+        return format_timecode(self.timestamp_ms)
 
 
 @dataclass(frozen=True)

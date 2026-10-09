@@ -60,6 +60,8 @@ DEFAULT_CONFLICT_MARGIN = 0.1
 # Injectable so the default path stays pure; mocked in tests. Should be deterministic for callers
 # that want reproducible output.
 MergeFn = Callable[[Sequence[Extraction]], str]
+RepresentativeFn = Callable[[Sequence[Extraction]], Extraction]
+ClusterText = Callable[[str], str]
 
 
 def _normalize(text: str) -> str:
@@ -91,8 +93,15 @@ def _frame_sort_key(frame: Frame) -> tuple[int, str]:
     return (frame.timestamp_ms, str(frame.path))
 
 
+def _comparison_text(extraction: Extraction, cluster_text: ClusterText | None) -> str:
+    text = extraction.text if cluster_text is None else cluster_text(extraction.text)
+    return _normalize(text)
+
+
 def _cluster(
-    extractions: Sequence[Extraction], similarity_threshold: float
+    extractions: Sequence[Extraction],
+    similarity_threshold: float,
+    cluster_text: ClusterText | None = None,
 ) -> list[list[Extraction]]:
     """Greedily group extractions whose normalized texts are within the similarity threshold.
 
@@ -105,7 +114,7 @@ def _cluster(
     clusters: list[list[Extraction]] = []
     seeds: list[str] = []
     for extraction in extractions:
-        norm = _normalize(extraction.text)
+        norm = _comparison_text(extraction, cluster_text)
         for i, seed in enumerate(seeds):
             if _similarity(norm, seed) >= similarity_threshold:
                 clusters[i].append(extraction)
@@ -137,6 +146,7 @@ def _build_notes(
     *,
     low_confidence_threshold: float,
     conflict_margin: float,
+    cluster_text: ClusterText | None = None,
 ) -> str:
     """Flag low-confidence and conflicting merges (see module docstring); empty string if clean.
 
@@ -156,15 +166,15 @@ def _build_notes(
             f"< {low_confidence_threshold:.2f}"
         )
 
-    rep_norm = _normalize(representative.text)
-    distinct = {_normalize(e.text) for e in cluster}
+    rep_norm = _comparison_text(representative, cluster_text)
+    distinct = {_comparison_text(e, cluster_text) for e in cluster}
     if len(distinct) > 1:
         # Highest confidence among members whose text differs from the representative's.
         runner_up = max(
-            (e.confidence for e in cluster if _normalize(e.text) != rep_norm),
-            default=None,
+            (e.confidence for e in cluster if _comparison_text(e, cluster_text) != rep_norm),
+            default=float("-inf"),
         )
-        if runner_up is not None and representative.confidence - runner_up <= conflict_margin:
+        if representative.confidence - runner_up <= conflict_margin:
             notes.append(
                 f"conflict: {len(distinct)} differing transcriptions with near-equal confidence "
                 f"(representative {representative.confidence:.2f} vs runner-up {runner_up:.2f}); "
@@ -196,6 +206,8 @@ def merge_results(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE,
     conflict_margin: float = DEFAULT_CONFLICT_MARGIN,
     merge_fn: MergeFn | None = None,
+    representative_fn: RepresentativeFn | None = None,
+    cluster_text: ClusterText | None = None,
 ) -> list[MergeResult]:
     """Cluster and merge ``extractions``, returning each snippet paired with its member extractions.
 
@@ -223,8 +235,12 @@ def merge_results(
             raise ValueError(f"{name} must be within [0, 1], got {value}")
 
     results: list[MergeResult] = []
-    for cluster in _cluster(extractions, similarity_threshold):
-        representative = _choose_representative(cluster)
+    for cluster in _cluster(extractions, similarity_threshold, cluster_text):
+        representative = (
+            representative_fn(cluster)
+            if representative_fn is not None
+            else _choose_representative(cluster)
+        )
         code = merge_fn(cluster) if merge_fn is not None else representative.text
         sources = tuple(sorted((e.frame for e in cluster), key=_frame_sort_key))
         notes = _build_notes(
@@ -232,6 +248,7 @@ def merge_results(
             representative,
             low_confidence_threshold=low_confidence_threshold,
             conflict_margin=conflict_margin,
+            cluster_text=cluster_text,
         )
         snippet = MergedSnippet(code=code, sources=sources, notes=notes)
         results.append(MergeResult(snippet=snippet, extractions=tuple(cluster)))
@@ -249,6 +266,8 @@ def merge_snippets(
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE,
     conflict_margin: float = DEFAULT_CONFLICT_MARGIN,
     merge_fn: MergeFn | None = None,
+    representative_fn: RepresentativeFn | None = None,
+    cluster_text: ClusterText | None = None,
 ) -> list[MergedSnippet]:
     """Merge de-duplicated, provenance-tagged snippets from per-frame extractions.
 
@@ -286,6 +305,8 @@ def merge_snippets(
             low_confidence_threshold=low_confidence_threshold,
             conflict_margin=conflict_margin,
             merge_fn=merge_fn,
+            representative_fn=representative_fn,
+            cluster_text=cluster_text,
         )
     ]
 

@@ -5,12 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from vce.backends.base import ExtractionBackend
-from vce.backends.vision import (
-    OCR_SYSTEM_PROMPT,
-    VisionLLMBackend,
-    _confidence,
-    _strip_fence,
-)
+from vce.backends.vision import OCR_SYSTEM_PROMPT, VisionLLMBackend
+from vce.ocr import DEFAULT_OCR_MODEL, strip_fence, text_confidence
 from vce.types import Frame
 
 FRAME = Frame(path=Path("f.jpg"), timestamp_ms=0)
@@ -64,33 +60,33 @@ def test_prompt_forbids_inference():
     ],
 )
 def test_strip_fence(content, expected):
-    assert _strip_fence(content) == expected
+    assert strip_fence(content) == expected
 
 
 def test_confidence_penalizes_ambiguous_markers():
-    assert _confidence("clean code") == pytest.approx(0.9)
-    assert _confidence("a[?]b[?]") == pytest.approx(0.7)
-    assert _confidence("[?]" * 20) == pytest.approx(0.1)  # floored
+    assert text_confidence("clean code") == pytest.approx(0.9)
+    assert text_confidence("a[?]b[?]") == pytest.approx(0.7)
+    assert text_confidence("[?]" * 20) == pytest.approx(0.1)  # floored
 
 
 def test_confidence_low_for_empty_text():
-    assert _confidence("") == pytest.approx(0.1)
-    assert _confidence("   \n ") == pytest.approx(0.1)
+    assert text_confidence("") == pytest.approx(0.1)
+    assert text_confidence("   \n ") == pytest.approx(0.1)
 
 
 def test_strip_fence_drops_leading_newline_keeps_indentation():
-    assert _strip_fence("```python\n\n    indented = 1\n```") == "    indented = 1"
+    assert strip_fence("```python\n\n    indented = 1\n```") == "    indented = 1"
 
 
 def test_strip_fence_unfenced_preserves_indentation():
     # raw (unfenced) model output must keep the first line's indentation
-    assert _strip_fence("\n    return x\n") == "    return x"
+    assert strip_fence("\n    return x\n") == "    return x"
 
 
 def test_strip_fence_ignores_inline_backticks():
     # triple-backticks inside the code (not at line start) must not end the block early
     content = "```python\ndoc = 'see ```x``` inline'\nmore = 1\n```"
-    assert _strip_fence(content) == "doc = 'see ```x``` inline'\nmore = 1"
+    assert strip_fence(content) == "doc = 'see ```x``` inline'\nmore = 1"
 
 
 def test_extract_caps_confidence_on_truncated_completion(png):
@@ -138,6 +134,20 @@ def test_extract_sends_image_and_prompt(png):
     image_part = messages[1]["content"][1]
     assert image_part["type"] == "image_url"
     assert image_part["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_default_model_is_shared_ocr_default(monkeypatch, png):
+    monkeypatch.delenv("OPENAI_OCR_MODEL", raising=False)
+    fake = FakeChatClient("```\nok\n```")
+    VisionLLMBackend(client=fake).extract(png, FRAME)
+    assert fake.captured["model"] == DEFAULT_OCR_MODEL
+
+
+def test_default_model_env_override(monkeypatch, png):
+    monkeypatch.setenv("OPENAI_OCR_MODEL", "my-custom-ocr")
+    fake = FakeChatClient("```\nok\n```")
+    VisionLLMBackend(client=fake).extract(png, FRAME)
+    assert fake.captured["model"] == "my-custom-ocr"
 
 
 def test_extract_without_openai_installed_raises(monkeypatch, png):

@@ -5,6 +5,7 @@ description = "Extract clean, provenance-tracked source code from programming-sc
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "anyio>=4.14.2",
     "imagehash>=4.3",
     "numpy>=1.26",
     "openai>=1.40",
@@ -51,8 +52,15 @@ show_missing = true
 [tool.ty.environment]
 root = ["src"]
 
+[tool.ty.src]
+exclude = ["tools/**"]
+
 [dependency-groups]
 dev = [
+    # Declared so Dependabot tracks it; otherwise only a transitive
+    # dependency (pip-api <- pip-audit) and advisories like PYSEC-2026-3721
+    # need a manual relock.
+    "pip>=26.2",
     "pip-audit>=2.10.0",
     "pre-commit>=4.6.0",
     "pytest>=9.0.3",

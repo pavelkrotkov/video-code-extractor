@@ -17,7 +17,8 @@ Two-tier cost control
 ---------------------
 ``primary`` is the cheap backend (Apple Vision on macOS by default). ``escalation`` is the accurate vision
 backend, invoked only for kept frames whose primary confidence is below
-:attr:`PipelineConfig.escalate_below`. When no escalation backend is wired up (e.g. no API key),
+:attr:`PipelineConfig.escalate_below` or whose transcription is structurally suspect. When no
+escalation backend is wired up (e.g. no API key),
 the pipeline runs single-tier on the primary backend alone.
 
 Everything heavy (ffmpeg, OCR, the OpenAI client) lives behind injected callables/objects, so the
@@ -34,6 +35,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from vce.backends.base import ExtractionBackend
+from vce.codequality import best_extraction, clean_transcription, is_suspect, reconcile_cluster
 from vce.cropping import crop_region
 from vce.dedup import dedup_frames
 from vce.frames import extract_frames, scene_change_frames
@@ -114,7 +116,7 @@ def _artifact_base(video: Path) -> str:
     return video.stem or "extracted"
 
 
-def _candidate_frames(video: Path, config: PipelineConfig) -> list[Frame]:
+def candidate_frames(video: Path, config: PipelineConfig) -> list[Frame]:
     """fps-sampled and scene-cut frames, merged into one timeline-ordered list.
 
     The two sources are complementary (see :mod:`vce.frames`); a frame captured by both at the
@@ -134,7 +136,7 @@ def _candidate_frames(video: Path, config: PipelineConfig) -> list[Frame]:
     return combined
 
 
-def _build_script(snippets: list[MergedSnippet]) -> str:
+def build_script(snippets: list[MergedSnippet]) -> str:
     """Concatenate snippet code into one clean script, blank-line separated, trailing newline.
 
     Empty snippets are skipped; an all-empty run yields an empty string (no stray blank lines).
@@ -145,12 +147,33 @@ def _build_script(snippets: list[MergedSnippet]) -> str:
     return "\n\n\n".join(parts) + "\n"
 
 
+def _should_escalate(extraction: Extraction, threshold: float) -> bool:
+    return extraction.confidence < threshold or is_suspect(extraction.text)
+
+
+def _review_note(snippet: MergedSnippet) -> str:
+    if snippet.notes:
+        return snippet.notes
+    return "structurally suspect code" if is_suspect(snippet.code) else ""
+
+
+def _warn_unresolved(snippets: list[MergedSnippet]) -> None:
+    flagged = [(snippet, _review_note(snippet)) for snippet in snippets]
+    flagged = [(snippet, note) for snippet, note in flagged if note]
+    if not flagged:
+        return
+    print(f"vce: {len(flagged)} snippet(s) flagged for review:", file=sys.stderr)
+    for snippet, note in flagged:
+        where = ", ".join(frame.timecode for frame in snippet.sources)
+        print(f"vce:   [{where}] {note}", file=sys.stderr)
+
+
 class Pipeline:
     """Runs the full extract→merge pipeline for a single video.
 
     Backends are injected so the orchestration is testable offline and the two-tier policy is
-    explicit: ``primary`` is always used; ``escalation`` (when provided) re-reads only the kept,
-    low-confidence frames.
+    explicit: ``primary`` is always used; ``escalation`` (when provided) re-reads only kept
+    low-confidence or structurally suspect frames.
     """
 
     def __init__(
@@ -190,7 +213,7 @@ class Pipeline:
         # Stage 1/5: Frame extraction
         print("[1/5] Extracting frames...", file=sys.stderr)
         t0 = time.perf_counter()
-        frames = _candidate_frames(video, config)
+        frames = candidate_frames(video, config)
         t_frames = time.perf_counter() - t0
 
         # Stage 2/5: Deduplication
@@ -214,7 +237,9 @@ class Pipeline:
                 extraction = self._primary.extract(image, frame)
                 if score_code_likeness(frame, extraction.text).score < config.score_threshold:
                     continue
-                if self._escalation is not None and extraction.confidence < config.escalate_below:
+                if self._escalation is not None and _should_escalate(
+                    extraction, config.escalate_below
+                ):
                     needs_escalation.append((i, frame, image, extraction))
                 else:
                     passed[i] = extraction
@@ -225,7 +250,7 @@ class Pipeline:
         t0 = time.perf_counter()
         if needs_escalation and self._escalation is not None:
             print(
-                f"[4/5] Escalating {len(needs_escalation)} low-confidence frames...",
+                f"[4/5] Escalating {len(needs_escalation)} low-confidence/suspect frames...",
                 file=sys.stderr,
             )
             with tqdm(needs_escalation, desc="  Escalate", unit="frame", file=sys.stderr) as pbar:
@@ -233,7 +258,7 @@ class Pipeline:
                     escalated = self._escalation.extract(image, frame)
                     escalated_count += 1
                     if score_code_likeness(frame, escalated.text).score >= config.score_threshold:
-                        passed[i] = escalated
+                        passed[i] = best_extraction((primary_ext, escalated))
                     else:
                         passed[i] = primary_ext
         else:
@@ -250,13 +275,17 @@ class Pipeline:
             similarity_threshold=config.similarity_threshold,
             low_confidence_threshold=config.low_confidence_threshold,
             conflict_margin=config.conflict_margin,
+            merge_fn=reconcile_cluster,
+            representative_fn=best_extraction,
+            cluster_text=clean_transcription,
         )
         snippets = [r.snippet for r in results]
+        _warn_unresolved(snippets)
         t_merge = time.perf_counter() - t0
 
         script_path = config.out_dir / f"{base}.py"
         provenance_path = config.out_dir / f"{base}.provenance.json"
-        script_text = _build_script(snippets)
+        script_text = build_script(snippets)
         script_path.write_text(script_text, encoding="utf-8")
         write_provenance(provenance_path, build_provenance(results))
 

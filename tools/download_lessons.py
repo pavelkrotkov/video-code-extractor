@@ -462,8 +462,7 @@ def main():
     no_video = len(lesson_links) - len(outputs)
     if no_video:
         print(
-            f"Note: {no_video}/{len(lesson_links)} lesson page(s) had no extractable video "
-            f"stream and will not appear in the merged file."
+            f"Note: {no_video}/{len(lesson_links)} lesson page(s) had no extractable video stream."
         )
 
     failed_downloads = len(downloaded) < len(outputs)
@@ -474,7 +473,7 @@ def main():
             "skipping merge to avoid an incomplete combined file.",
             file=sys.stderr,
         )
-    if not args.no_merge and not failed_downloads:
+    elif not args.no_merge:
         merged_path = raw_dir / f"{slug}.mp4"
         print(f"Merging {len(downloaded)} lesson(s) -> {merged_path}")
         try:

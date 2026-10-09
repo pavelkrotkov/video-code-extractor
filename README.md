@@ -62,6 +62,13 @@ uv run vce extract LESSON.mp4 --backend vision-gpt4v
 Remote extraction uses the OpenAI API and may incur usage charges. The key is read only from the
 environment; there is deliberately no command-line key option.
 
+All remote OCR (the escalation tier and the batch flow below) defaults to the `gpt-5.4-mini`
+model; override it with:
+
+```bash
+export OPENAI_OCR_MODEL=gpt-5.4-mini
+```
+
 Output lands in `out/` by default (gitignored). For `LESSON.mp4`:
 
 ```text
@@ -104,6 +111,52 @@ The most useful options are:
 | `--escalate-below FLOAT` | Retry local OCR remotely below this confidence; default `0.6` |
 | `--no-escalate` | Guarantee a local-only run when using `macos-vision` |
 
+## Batch OCR (OpenAI Batch API)
+
+Bulk remote OCR goes through the OpenAI Batch API instead of per-frame synchronous calls: the
+workload is offline and frame-based, so batching it is cheaper and does not block a local run.
+The flow is split into two commands joined by a manifest file, because a batch can take up to
+24 hours to complete.
+
+Submit a video's candidate frames (sampled, deduplicated, and optionally cropped) as one batch:
+
+```bash
+export OPENAI_API_KEY=...
+uv run vce ocr-submit LESSON.mp4 --crop 250,120,1400,800
+```
+
+This writes `out/LESSON.batch_input.jsonl` (one `/v1/responses` request per screenshot, each with
+a stable `custom_id` like `LESSON_000314_000`), submits it, and records the batch id plus each
+request's frame provenance in `out/LESSON.batch.json`. Check progress with:
+
+```bash
+uv run vce ocr-status out/LESSON.batch.json
+```
+
+Once the batch is complete, fetch and normalize the results:
+
+```bash
+uv run vce ocr-fetch out/LESSON.batch.json --merge
+```
+
+Fetch saves the raw batch output verbatim (`LESSON.batch_output.jsonl`, plus
+`LESSON.batch_errors.jsonl` when the batch has an error file) for debugging, matches results back
+to frames by `custom_id` only (batch output order is not assumed), and writes one timestamped
+record per submitted frame to `LESSON.ocr.jsonl`:
+
+```json
+{"id": "LESSON_000314_000", "video": "LESSON.mp4", "timestamp": "00:03:14.000", "timestamp_ms": 194000, "frame_path": "out/LESSON_frames/frame_000194.jpg", "image_path": "out/LESSON_crops/....jpg", "status": "ok", "text": "import jax\nimport jax.numpy as jnp"}
+```
+
+`status` is one of `ok`, `no_code_visible` (the model answered `NO_CODE_VISIBLE`), `uncertain`
+(truncated or empty output), or `error` (failed or missing result; `detail` says why). With
+`--merge`, usable records are run through the regular merge stage to produce `LESSON.py` and
+`LESSON.provenance.json`.
+
+The synchronous `vision-gpt4v` backend remains only as the escalation tier of `vce extract`,
+where a result is needed within the run; it now uses the same default model and
+`OPENAI_OCR_MODEL` override as the batch flow.
+
 ## Actual pipeline order
 
 ```mermaid
@@ -137,7 +190,8 @@ for tests, experiments, and custom pipelines:
 | Perceptual deduplication | `vce.dedup.dedup_frames` |
 | Fixed-region cropping | `vce.cropping.crop_region` |
 | Local OCR | `vce.backends.macos_vision.MacOSVisionBackend` |
-| Remote extraction | `vce.backends.vision.VisionLLMBackend` |
+| Remote extraction (sync, escalation tier) | `vce.backends.vision.VisionLLMBackend` |
+| Remote extraction (OpenAI Batch) | `vce.batch_ocr` (`build_requests`, `submit_batch`, `parse_batch_output`, `records_to_extractions`) |
 | Code-likeness scoring | `vce.scoring.score_code_likeness` |
 | Snippet merging and provenance | `vce.merge.merge_results`, `vce.merge.build_provenance`, `vce.merge.write_provenance` |
 | End-to-end orchestration | `vce.pipeline.Pipeline`, `PipelineConfig` |

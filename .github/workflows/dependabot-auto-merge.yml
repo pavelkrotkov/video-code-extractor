@@ -1,0 +1,74 @@
+name: Dependabot Auto-Merge
+
+# Sweeper: squash-merges open Dependabot PRs once every check is green.
+# Runs on a schedule instead of pull_request_target so it never executes
+# untrusted PR code, and so transient failures are retried on the next pass.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  merge-passing-dependabot-prs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # squash-merge Dependabot PRs and delete their branches
+      pull-requests: write # read PR metadata
+      checks: read # evaluate check runs via gh pr checks
+    steps:
+      - name: Merge passing Dependabot PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          pr_numbers="$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --author "app/dependabot" \
+            --state open \
+            --limit 100 \
+            --json number \
+            --jq '.[].number')"
+
+          if [ -z "$pr_numbers" ]; then
+            echo "No open Dependabot PRs."
+            exit 0
+          fi
+
+          for pr_number in $pr_numbers; do
+            echo "Evaluating PR #$pr_number"
+
+            info="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" \
+              --json headRefOid,isDraft,mergeable)"
+            head_sha="$(jq -r '.headRefOid' <<<"$info")"
+            if [ "$(jq -r '.isDraft' <<<"$info")" = "true" ] \
+              || [ "$(jq -r '.mergeable' <<<"$info")" != "MERGEABLE" ]; then
+              echo "Draft or unmergeable; skipping PR #$pr_number"
+              continue
+            fi
+
+            if ! gh pr checks "$pr_number" --repo "$GITHUB_REPOSITORY" \
+              > "$RUNNER_TEMP/checks-$pr_number.txt" 2>&1; then
+              cat "$RUNNER_TEMP/checks-$pr_number.txt"
+              echo "Checks pending or failing; skipping PR #$pr_number"
+              continue
+            fi
+
+            echo "All checks passed on $head_sha; squash-merging PR #$pr_number"
+            # --match-head-commit pins the merge to the exact commit whose
+            # checks were evaluated, closing the rebase/update race.
+            if ! gh pr merge "$pr_number" --repo "$GITHUB_REPOSITORY" \
+              --squash \
+              --delete-branch \
+              --match-head-commit "$head_sha"; then
+              echo "Merge rejected; skipping PR #$pr_number"
+            fi
+          done
